@@ -1,0 +1,212 @@
+---
+title: "Fig1_A93inhibitor"
+author: "Kathryn Walters"
+date: "7/12/2022"
+output: html_document
+---
+
+
+
+```{r setup, include=TRUE, echo=TRUE, warning=FALSE, message = FALSE }
+library(here)
+library(drc) # modeling tools
+library(tidyverse) # your go to set of functions for messing w/data
+library(RColorBrewer) # to make color schemes
+#library(ggpubr) # publication quality ggplots ha ha ha
+library(ggthemes) # additional themes for ggplot-ing
+library(gridExtra) # allows arranging of plots (rows/columns...)
+library(splitstackshape)
+library(ggpubr)
+```
+
+
+
+```{r function, message=FALSE, warning=FALSE, include=TRUE}
+
+ELISAmodelfit <- function(OD) {
+## ELISA model fit
+#Fit a 4-parameter model from the standard curve in order to identify the correct paramaters of a formula to convert fluorescence to aldosterone concentrations.
+# Subtract background signal (measured at 540nm) from target signal (measured at 450nm)
+OD$corrected <- OD$OD_450 - OD$OD_540
+
+standards <- OD %>% filter(grepl("std", Sample)) # one way of creating a new tibble that only contains your standards
+
+nsb <- OD %>% filter(grepl("nsb", Sample)) # one way of creating a new tibble that only contains your NSBs
+
+# create a tibble for the actual concentrations by std name -> this has conc for aldosterone kit.
+stdcrvdata <- data.frame(
+  Sample=paste0("std",rep(seq(1,7,1),each=2)),
+  known=rep(c(4000,1000,250,62.25,15.625,3.906,0),each=2)
+  )
+
+# sort standards by name to match the order of 'stdcrvdata' data.
+standards <- standards %>% arrange(Sample) %>% dplyr::select(c(Sample,corrected))
+
+# sort stdcrvdata by name to match the order of 'standards' data.
+stdcrvdata <- stdcrvdata %>% arrange(Sample)
+
+# combine them together
+stdcrvdata <- data.frame(standards,expected=stdcrvdata$known)
+colnames(stdcrvdata)[2] <- "measured"
+
+# take out zeros
+stdcrvdata <- stdcrvdata %>% filter(expected > 0)
+stdcrvdata$logconc <-log10(stdcrvdata$expected)# log10 from conc
+
+# plot(stdcrvdata$logconc, stdcrvdata$measured)
+# model the standard curve using generated points.  plot those points in red.
+fit <- drm(formula =   measured ~ logconc , data = stdcrvdata, fct = LL.4())
+summary(fit)
+
+# This is a description of the variables and terms defined in the 'fit' model.
+# x = the independent variable (Absorbance) (Concentration, estimated from the Absorbance)
+# y = the dependent variable 
+# The 4 estimated parameters consist of the following:
+
+# the minimum value that can be obtained. (this is the ABS at conc. 0)
+# a = fit$coefficients[2] 
+# d = the maximum value that can be obtained (i.e. what happens at infinite dose)
+# c = the point of inflection (i.e. the point on the S shaped curve halfway between a and d)
+# b = Hill’s slope of the curve (i.e. this is related to the steepness of the curve at point c).
+
+# Generate points from  model. Pick range from logconc
+x <- seq(from = 0, to = 4, length=100)
+
+# from OD ~ d + (a - d)/(1 + (logconc/cc)^b)
+y <- (fit$coefficients[2]+ (fit$coefficients[3]- fit$coefficients[2])/(1+(x/fit$coefficients[4])^ fit$coefficients[1])) 
+# remove standards and NSB wells leaving only experimental measurements
+OD <- OD %>% filter(!grepl("std|nsb", Sample))
+
+# here we are applying the equation described in ELISAmodelfit function to...
+OD$loganswer<- fit$coefficients[4]*(
+  (
+    (-1* fit$coefficients[3]+ OD$corrected)/
+      (fit$coefficients[2]-OD$corrected))^(1/ fit$coefficients[1])
+  )
+
+OD$conc <- 10^OD$loganswer
+
+OD$below <- OD$conc < min(stdcrvdata$expected)
+OD$above <- OD$conc > max(stdcrvdata$expected)
+
+plot(x = stdcrvdata$logconc, y = stdcrvdata$measured, main="log standard curve",
+  xlim = c(min(x),max(x)),
+  ylim = c(min(y),max(y))
+     )
+lines(x,y, lty="dotted", col="red")
+lines(OD$loganswer, OD$corrected, type="points", col="blue")
+
+OD$Sample <- gsub(pattern = "mediaOnly", replacement = "media_NA", x = OD$Sample)
+
+OD <- separate(data = OD, col = Sample, into = c("tx","Dox"), sep = "_")
+
+OD$Dox <- relevel(factor(OD$Dox), ref = "ND")
+OD$tx <- relevel(factor(OD$tx), ref = "DMSO")
+
+bg <- OD %>% filter(tx=="media") %>% summarise(mean(na.omit(conc))) %>% pull()
+OD$conc <- OD$conc - bg
+
+OD <- OD %>% filter(tx!="media")
+OD$tx <- gsub(x = OD$tx, pattern = "uM", replacement = "")
+levels(factor(OD$tx))
+OD$tx <- factor(OD$tx, levels = c("DMSO","0.1", "0.5", "1", "2.5", "5","10","20","50","100"))
+
+OD$Ro_conc <- as.numeric(gsub("DMSO","0", OD$tx))
+
+#write_csv(x = OD, path = "data/output/"OD".csv")
+
+return(OD)
+}
+
+```
+
+
+```{r read data, include=TRUE, warning=FALSE, message=FALSE}
+# Read in first set of data files. OD is ELISA file. PB is presto blue file. 
+OD1 <- read_csv(here("data", "ELISA", "KAB061_RoResAll.csv"))
+colnames(OD1) <- c("Sample","Well","OD_450","OD_540","OD_570", "Viability_1hr")
+
+
+# Read in second set of data files. OD is ELISA file. PB is presto blue file.
+OD2 <- read_csv(here("data", "ELISA", "KAB064_RoResAll.csv"))
+colnames(OD2) <- c("Sample","Well","OD_450","OD_540","OD_570", "Viability_1hr")
+
+```
+
+
+```{r ELISA modeling, include=TRUE, warning=FALSE, message=FALSE}
+OD1 <- ELISAmodelfit(OD1)
+OD1$batch <- rep("A",nrow(OD1))
+
+OD2 <- ELISAmodelfit(OD2)
+OD2$batch <- rep("B",nrow(OD2))
+```
+
+```{r}
+OD <- bind_rows(OD1, OD2) #combining everything into one dataframe. 
+
+RoResData <- OD %>% filter(Dox=="Dox")
+dmso_A_aldo <- RoResData %>% filter(batch=="A" & Ro_conc==0) %>% select(conc) %>% summarise(mean(conc)) %>% pull()
+dmso_B_aldo <- RoResData %>% filter(batch=="B" & Ro_conc==0) %>% select(conc) %>% summarise(mean(conc)) %>% pull()
+
+tmp <- mutate(RoResData, pAldo = ifelse(batch == "A", 100*conc/dmso_A_aldo, 
+                                       ifelse(batch == "B", 100*conc/dmso_B_aldo)))
+tmp$pAldo <- as.numeric(tmp$pAldo)
+
+
+dmso_A_PB <- RoResData %>% filter(batch=="A" & Ro_conc==0) %>% select(Viability_1hr) %>% summarise(mean(Viability_1hr)) %>% pull()
+dmso_B_PB <- RoResData %>% filter(batch=="B" & Ro_conc==0) %>% select(Viability_1hr) %>% summarise(mean(Viability_1hr)) %>% pull()
+
+tmp <- mutate(tmp, pPB = ifelse(batch == "A", 100*Viability_1hr/dmso_A_PB, 
+                                       ifelse(batch == "B", 100*Viability_1hr/dmso_B_PB, "")))
+tmp$pPB <- as.numeric(tmp$pPB)
+
+```
+
+
+```{r NoDox data, include=TRUE, warning=FALSE, message=FALSE}
+
+NoDoxData <- OD %>% filter(Dox=="ND")
+dmso_A_aldo_us <- NoDoxData %>% filter(batch=="A" & Ro_conc==0) %>% select(conc) %>% summarise(mean(conc)) %>% pull()
+dmso_B_aldo_us <- NoDoxData %>% filter(batch=="B" & Ro_conc==0) %>% select(conc) %>% summarise(mean(conc)) %>% pull()
+
+tmp_us <- mutate(NoDoxData, pAldo = ifelse(batch == "A", 100*conc/dmso_A_aldo_us, 
+                                       ifelse(batch == "B", 100*conc/dmso_B_aldo_us,"")))
+tmp_us$pAldo <- as.numeric(tmp_us$pAldo)
+
+
+dmso_A_PB_us <- NoDoxData %>% filter(batch=="A" & Ro_conc==0) %>% select(Viability_1hr) %>% summarise(mean(Viability_1hr)) %>% pull()
+dmso_B_PB_us <- NoDoxData %>% filter(batch=="B" & Ro_conc==0) %>% select(Viability_1hr) %>% summarise(mean(Viability_1hr)) %>% pull()
+
+tmp_us <- mutate(tmp_us, pPB = ifelse(batch == "A", 100*Viability_1hr/dmso_A_PB_us, 
+                                       ifelse(batch == "B", 100*Viability_1hr/dmso_B_PB_us, "")))
+tmp_us$pPB <- as.numeric(tmp_us$pPB)
+
+```
+
+
+```{r}
+allData <- bind_rows(tmp, tmp_us)
+p_Aldo_per <- ggline(allData, x = "Ro_conc", y = "pAldo", color = "Dox",palette = c("black","red"), ylab = "% Aldosterone", add = "mean_sd", xlab = "[Ro] uM") + rotate_x_text(60) + geom_hline(yintercept = 100, linetype = "dotted", color = "grey")
+p_Aldo_per <- p_Aldo_per + ylim(-1,130)
+
+p_PB_per <- ggline(allData, x = "Ro_conc", y = "pPB", color = "Dox",palette = c("black","red"),ylab = "% Viability", add = "mean_sd", xlab = "[Ro] uM") + rotate_x_text(60) + geom_hline(yintercept = 100, linetype = "dotted", color = "grey")
+
+p_PB_per <- p_PB_per + ylim(-1,130)
+
+
+p_all_PR <- cowplot::plot_grid(
+  p_Aldo_per + theme(legend.position="bottom"),
+  p_PB_per + theme(legend.position="bottom"),
+  align = 'vh',
+  #labels = c("A", "B","C"),
+  hjust = -1,
+  nrow = 1
+  )
+
+p_all_PR
+#ggsave(plot = p_all_PR, filename = "./plots/all_percent_sd.pdf", width = 12, height = 3)
+
+
+```
+

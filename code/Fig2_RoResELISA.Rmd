@@ -1,0 +1,208 @@
+---
+title: "Fig2_RoResELISA"
+author: "Kathryn Walters"
+date: "7/12/2022"
+output: html_document
+---
+
+
+
+```{r setup, include=TRUE, echo=TRUE, warning=FALSE, message=FALSE}
+
+library(drc) # modeling tools
+library(tidyverse) # your go to set of functions for messing w/data
+library(RColorBrewer) # to make color schemes
+#library(ggpubr) # publication quality ggplots ha ha ha
+library(ggthemes) # additional themes for ggplot-ing
+library(gridExtra) # allows arranging of plots (rows/columns...)
+library(splitstackshape)
+library(ggpubr)
+library(here)
+
+```
+
+```{r function, message=FALSE, warning=FALSE, include=TRUE}
+
+ELISAmodelfit <- function(OD) {
+## ELISA model fit
+#Fit a 4-parameter model from the standard curve in order to identify the correct paramaters of a formula to convert fluorescence to aldosterone concentrations.
+# Subtract background signal (measured at 540nm) from target signal (measured at 450nm)
+OD$corrected <- OD$OD_450 - OD$OD_540
+
+standards <- OD %>% filter(grepl("std", Sample)) # one way of creating a new tibble that only contains your standards
+
+nsb <- OD %>% filter(grepl("nsb", Sample)) # one way of creating a new tibble that only contains your NSBs
+
+# create a tibble for the actual concentrations by std name -> this has conc for aldosterone kit.
+stdcrvdata <- data.frame(
+  Sample=paste0("std",rep(seq(1,7,1),each=2)),
+  known=rep(c(4000,1000,250,62.25,15.625,3.906,0),each=2)
+  )
+
+# sort standards by name to match the order of 'stdcrvdata' data.
+standards <- standards %>% arrange(Sample) %>% dplyr::select(c(Sample,corrected))
+
+# sort stdcrvdata by name to match the order of 'standards' data.
+stdcrvdata <- stdcrvdata %>% arrange(Sample)
+
+# combine them together
+stdcrvdata <- data.frame(standards,expected=stdcrvdata$known)
+colnames(stdcrvdata)[2] <- "measured"
+
+# take out zeros
+stdcrvdata <- stdcrvdata %>% filter(expected > 0)
+stdcrvdata$logconc <-log10(stdcrvdata$expected)# log10 from conc
+
+# plot(stdcrvdata$logconc, stdcrvdata$measured)
+# model the standard curve using generated points.  plot those points in red.
+fit <- drm(formula =   measured ~ logconc , data = stdcrvdata, fct = LL.4())
+summary(fit)
+
+# This is a description of the variables and terms defined in the 'fit' model.
+# x = the independent variable (Absorbance) (Concentration, estimated from the Absorbance)
+# y = the dependent variable 
+# The 4 estimated parameters consist of the following:
+
+# the minimum value that can be obtained. (this is the ABS at conc. 0)
+# a = fit$coefficients[2] 
+# d = the maximum value that can be obtained (i.e. what happens at infinite dose)
+# c = the point of inflection (i.e. the point on the S shaped curve halfway between a and d)
+# b = Hill’s slope of the curve (i.e. this is related to the steepness of the curve at point c).
+
+# Generate points from  model. Pick range from logconc
+x <- seq(from = 0, to = 4, length=100)
+
+# from OD ~ d + (a - d)/(1 + (logconc/cc)^b)
+y <- (fit$coefficients[2]+ (fit$coefficients[3]- fit$coefficients[2])/(1+(x/fit$coefficients[4])^ fit$coefficients[1])) 
+# remove standards and NSB wells leaving only experimental measurements
+OD <- OD %>% filter(!grepl("std|nsb", Sample))
+
+# here we are applying the equation described in ELISAmodelfit function to...
+OD$loganswer<- fit$coefficients[4]*(
+  (
+    (-1* fit$coefficients[3]+ OD$corrected)/
+      (fit$coefficients[2]-OD$corrected))^(1/ fit$coefficients[1])
+  )
+
+OD$conc <- 10^OD$loganswer
+
+OD$below <- OD$conc < min(stdcrvdata$expected)
+OD$above <- OD$conc > max(stdcrvdata$expected)
+
+plot(x = stdcrvdata$logconc, y = stdcrvdata$measured, main="log standard curve",
+  xlim = c(min(x),max(x)),
+  ylim = c(min(y),max(y))
+     )
+lines(x,y, lty="dotted", col="red")
+lines(OD$loganswer, OD$corrected, type="points", col="blue")
+
+OD$Sample <- gsub(pattern = "mediaOnly", replacement = "media_NA", x = OD$Sample)
+
+OD <- separate(data = OD, col = Sample, into = c("tx","stim"), sep = "_")
+
+OD$stim <- relevel(factor(OD$stim), ref = "unstim")
+OD$tx <- relevel(factor(OD$tx), ref = "DMSO")
+
+bg <- OD %>% filter(tx=="media") %>% summarise(mean(na.omit(conc))) %>% pull()
+OD$conc <- OD$conc - bg
+
+OD <- OD %>% filter(tx!="media")
+OD$tx <- gsub(x = OD$tx, pattern = "uM", replacement = "")
+levels(factor(OD$tx))
+OD$tx <- factor(OD$tx, levels = c("DMSO","0.1", "0.5", "1", "2.5", "5","10","20","50","100"))
+
+OD$Ro_conc <- as.numeric(gsub("DMSO","0", OD$tx))
+
+names(OD)[7] <- "PB_24"
+
+#write_csv(x = OD, path = "data/output/"OD".csv")
+
+return(OD)
+}
+
+```
+
+
+
+```{r read data, include=TRUE, warning=FALSE, message=FALSE}
+
+# Read in data file. OD is ELISA file. PB is presto blue file.
+OD <- read_csv(here("data", "ELISA", "KAB050_A93ELISA.csv"))
+colnames(OD) <- c("Sample","Well","OD_450","OD_540","OD_570","viability_1hr", "viability_24hr")
+OD <- OD %>% select(-viability_24hr)
+
+```
+
+
+```{r ELISA modeling, include=TRUE, warning=FALSE, message=FALSE}
+OD <- ELISAmodelfit(OD)
+```
+
+```{r}
+DMSOmeanstim <- OD %>% filter(tx == "DMSO") %>% filter(stim == "stim") %>% select(conc) %>% summarise(mean(conc)) %>% pull()
+
+DMSOmeanUS <- OD %>% filter(tx == "DMSO") %>% filter(stim == "us") %>% select(conc) %>% summarise(mean(conc)) %>% pull()
+
+ODstim <- OD %>% filter(stim == "stim")
+
+ODus <- OD %>% filter(stim == "us")
+
+ODstim$percent <- ODstim$conc/DMSOmeanstim*100
+ODus$percent <- ODus$conc/DMSOmeanUS*100
+
+ODstim$percent <- as.numeric(ODstim$percent)
+ODus$percent <- as.numeric(ODus$percent)
+
+dmso_PB <- ODstim %>% filter(tx=="DMSO") %>% select(viability_1hr) %>% summarise(mean(viability_1hr)) %>% pull()
+dmso_PB_us <- ODus %>% filter(tx=="DMSO") %>% select(viability_1hr) %>% summarise(mean(viability_1hr)) %>% pull()
+
+ODstim$pPB <- 100*ODstim$viability_1hr/dmso_PB
+ODstim$pPB <- as.numeric(ODstim$pPB)
+
+ODus$pPB <- 100*ODus$viability_1hr/dmso_PB_us
+ODus$pPB <- as.numeric(ODus$pPB)
+
+
+p_cort_per_stim <- ggline(ODstim, x = "Ro_conc", y = "percent", ylab = "% Aldosterone", add = "mean_sd", xlab = "[A93] uM") + rremove("legend") + rotate_x_text(60) + geom_hline(yintercept = 100, linetype = "dotted", color = "black")
+
+p_cort_per_stim <- p_cort_per_stim + ylim(0,155)
+p_cort_per_stim
+
+p_cort_perPB_stim <- ggline(ODstim, x = "Ro_conc", y = "pPB", ylab = "% Viability", add = "mean_sd", xlab = "[A93] uM") + rremove("legend") + rotate_x_text(60) + geom_hline(yintercept = 100, linetype = "dotted", color = "black")
+
+p_cort_perPB_stim <- p_cort_perPB_stim + ylim(0,155)
+p_cort_perPB_stim
+
+
+p_all_PR <- cowplot::plot_grid(
+  p_cort_per_stim + theme(legend.position="none"),
+  p_cort_perPB_stim + theme(legend.position="none"),
+  align = 'vh',
+  hjust = -1,
+  nrow = 1
+  )
+
+p_all_PR
+
+p_cort_per_us <- ggline(ODus, x = "Ro_conc", y = "percent", ylab = "% Aldosterone", add = "mean_sd", xlab = "[A93] uM") + rremove("legend") + rotate_x_text(60) + geom_hline(yintercept = 100, linetype = "dotted", color = "black")
+
+p_cort_per_us <- p_cort_per_us + ylim(0,130)
+p_cort_per_us
+
+
+p_cort_pPB_us <- ggline(ODus, x = "Ro_conc", y = "pPB", ylab = "% Viability", add = "mean_sd", xlab = "[A93] uM") + rremove("legend") + rotate_x_text(60) + geom_hline(yintercept = 100, linetype = "dotted", color = "black")
+
+p_cort_pPB_us <- p_cort_pPB_us + ylim(0,130)
+p_cort_pPB_us
+
+p_all_PR_us <- cowplot::plot_grid(
+  p_cort_per_us + theme(legend.position="none"),
+  p_cort_pPB_us + theme(legend.position="none"),
+  align = 'vh',
+  hjust = -1,
+  nrow = 1
+  )
+
+p_all_PR_us
+```
+

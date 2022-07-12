@@ -1,0 +1,359 @@
+---
+title: "Fig1_RNAseq"
+author: "Neel Mukherjee, Kathryn Walters"
+date: "7/11/2022"
+output: html_document
+---
+
+```{r setup}
+# Import R packages that we will need in the analysis
+knitr::opts_chunk$set(echo = TRUE)
+library(here)
+library(tidyverse)
+library(viridis)
+library(pheatmap)
+library(ggplot2)
+library(ggthemes)
+library(ggrepel)
+library(scales)
+library(limma)
+library(reshape2)
+library(msigdbr)
+library(GeneOverlap)
+library(tximport)
+library(DESeq2)
+library(cowplot)
+# you will need to install all these packages before you can run this.
+
+# list of functions 
+
+## function for plotting changes
+plotgeneFC <- function(deseq_object, goi) {
+  
+
+
+  mygene <- annotation %>% filter(symbol==goi)
+  d <- plotCounts(deseq_object, gene = mygene$gene, intgroup = c("Treatment","Time"), returnData = TRUE) 
+  n <- d %>% filter(Time==0) %>% summarise(mean(count)) %>% pull() # unstimulated average
+  
+  d <- d %>% mutate(fc = count/n)
+  
+  d$Time <- as.numeric(as.character(d$Time))
+
+  ggplot(d, aes(x = Time, y = fc, color = Treatment, group = Treatment)) + 
+    geom_point() + stat_summary(fun=mean, geom="line") +
+    scale_color_manual(values = c("black","red")) +
+    ggtitle(mygene$symbol) +
+    ylab("Fold change vs unstimulated") +
+    xlab("Hours after AngII stimulation") +
+    theme_few() 
+
+
+}
+
+plotgeneCounts <- function(deseq_object, goi) {
+  
+
+
+  mygene <- annotation %>% filter(symbol==goi)
+  d <- plotCounts(deseq_object, gene = mygene$gene, intgroup = c("Treatment","Time"), returnData = TRUE) 
+  d$Time <- as.numeric(as.character(d$Time))
+
+  ggplot(d, aes(x = Time, y = count, color = Treatment, group = Treatment)) + 
+    geom_point() + stat_summary(fun=mean, geom="line") +
+    scale_color_manual(values = c("black","red")) +
+    ggtitle(mygene$symbol) +
+    ylab("Normalized Counts") +
+    xlab("Hours after AngII stimulation") +
+    theme_few() 
+
+
+}
+
+
+
+```
+
+
+
+```{r get expression}
+geneInfo <- read_csv(here("data","accessories","gencode.v26.primary.info.csv.zip"), col_names = F) 
+
+colnames(geneInfo) <- c("gene","transcript","biotype","symbol")
+
+
+geneInfo <- geneInfo[grep('^pre_', geneInfo$transcript , invert = T),]
+
+tx2gene <- geneInfo %>% select(transcript, gene)
+
+
+msi_metadata <- readxl::read_xlsx(here("data","accessories","NMLabLibrarySummary.xlsx"), sheet = 1) %>% filter(Project == "MSI2") %>%
+  select(SampleID, Treatment1, Time_hr, Treatment2)
+
+msi_metadata <- as.data.frame(msi_metadata)
+
+colnames(msi_metadata) <- c("SampleID", "Treatment", "Time", "Rep")
+
+
+
+myquantfiles <- paste("data/RNAseq/",
+                      msi_metadata$SampleID,
+                      "/quant.sf.gz",
+                      sep = "")
+  
+
+
+names(myquantfiles) <- paste(msi_metadata$Treatment, str_pad(msi_metadata$Time, 2, pad = "0"), msi_metadata$Rep, sep = "_")
+
+myTxi <- tximport(myquantfiles, type = "salmon", tx2gene = tx2gene)
+
+```
+
+```{r clustering qc}
+# use mature gene level (sum of all mature transcripts) estimates for QC EDA
+qcinput <- myTxi$abundance
+
+
+qcinput <- log2(qcinput[rowSums(qcinput) > 100,] + 1)
+dim(qcinput)
+qcCor <- cor(qcinput)
+
+colnames(qcCor) <- gsub("_Rep[1|2|3|4]","",colnames(qcCor))
+
+rownames(qcCor) <- colnames(qcCor)
+
+
+nCut <- 4 
+pheatmap::pheatmap(qcCor, clustering_distance_rows = "euclidean",clustering_distance_cols = "euclidean", clustering_method = "complete", 
+                   cutree_cols = nCut, cutree_rows = nCut, 
+                   color = viridis(10, option = "E", direction = -1), border_color = "black")
+                   
+      
+dev.off()
+
+
+
+```
+
+
+
+```{r pca qc}
+
+# perform pca
+pca_data <- prcomp(qcinput, center = T, scale. = T) 
+
+pca_data_info <- summary(pca_data) # summarize the PCs by variance and save object
+
+pca_plot_data <- data.frame(pca_data$rotation) # we make a dataframe out of the rotations and will use this to plot
+
+pca_plot_data$ID <- rownames(pca_plot_data)
+
+pca_plot_data <- pca_plot_data %>% separate(col = ID, sep = "_", into = c("tx","time","rep"))
+
+myLev <- unique(pca_plot_data$time)
+
+pca_plot_data$time <- factor(pca_plot_data$time, levels = myLev)
+
+pca_plot_data$condition <- factor(paste(pca_plot_data$tx,pca_plot_data$time, sep = "_"))
+
+pca_plot_data$condition <- relevel(pca_plot_data$condition, ref="Untreated_00")
+
+
+labelPosition <- pca_plot_data %>% group_by(tx, time,rep) %>% select(PC1, PC2) %>% summarise(mPC1=mean(PC1), mPC2=mean(PC2))
+
+myCols <- c("black",
+            RColorBrewer::brewer.pal(n = 8, name = "Greys")[2:6],
+            RColorBrewer::brewer.pal(n = 6, name = "Reds")[2:6])
+
+
+
+p_pca <- ggplot(pca_plot_data, aes(x=-PC2, y=-PC1, color=condition)) +
+  geom_point(size=2) + 
+  theme_classic() + #xlim(.4,-.2) +
+  ylab(paste("PC1 (%",100*round(pca_data_info$importance[2,1], digits = 3),")", sep = "")) +
+  xlab(paste("PC2 (%",100*round(pca_data_info$importance[2,2], digits = 3),")", sep = "")) +
+  scale_color_manual(values = myCols)
+
+
+
+# ggsave(plot = p_pca, filename = here("fig1_exvivo","plots","qcPCA_exvivo.pdf"), device = "pdf", units = "in", width = 6, height = 4, dpi = 320)
+```
+
+
+
+
+```{r deg analysis}
+msi_metadata[1:4,2] <- c("Ro","Ro","DMSO","DMSO")
+msi_metadata[3:4,4] <- c("Rep1","Rep2")
+
+msi_metadata$Treatment <- relevel(factor(msi_metadata$Treatment), "DMSO")
+
+msi_metadata$Time <- factor(msi_metadata$Time, c("0","4","8","12","16","24"))
+
+msi_metadata$Rep <- factor(msi_metadata$Rep)
+
+myquantfiles <- paste("data/RNAseq/",
+                      msi_metadata$SampleID,
+                      "/quant.sf.gz",
+                      sep = "")
+  
+
+rownames(msi_metadata) <- paste(msi_metadata$Treatment,
+                          str_pad(msi_metadata$Time, 2, pad = "0"),
+                          msi_metadata$Rep, sep = "_")
+
+# import using tximport
+names(myquantfiles) <- paste(msi_metadata$Treatment, str_pad(msi_metadata$Time, 2, pad = "0"), msi_metadata$Rep, sep = "_")
+
+myTxi <- tximport(myquantfiles, type = "salmon", tx2gene = tx2gene)
+
+
+
+
+dds <- DESeqDataSetFromTximport(txi = myTxi,
+                         colData = msi_metadata,
+                         design =  ~ Treatment + Time + Treatment:Time)
+
+ddsTC <- DESeq(dds, test="LRT", reduced = ~ Treatment + Time)
+
+# add gene symbols to ddsTC
+# source info must be in same order as rownames of ddsTC
+
+annotation <- geneInfo %>% 
+  select(gene, symbol, biotype) %>% # exclude transcripts
+  filter(gene %in% rownames(ddsTC)) %>%  # only use genes in ddsTC
+  unique() %>% # remove duplicates
+  as.data.frame() # convert into dataframe
+
+rownames(annotation) <- annotation$gene
+annotation <- annotation[rownames(ddsTC),]
+
+# make sure order is identical
+stopifnot(
+  identical(rownames(ddsTC), annotation$gene)
+)
+
+# add gene symbol and biotype
+mcols(ddsTC) <- cbind(mcols(ddsTC), symbol=annotation$symbol, biotype = annotation$biotype)
+
+# extract results from deseq object include symbol and biotype
+resTC <- results(ddsTC)
+resTC$symbol <- mcols(ddsTC)$symbol
+resTC$biotype <- mcols(ddsTC)$biotype
+
+# genes that have corrected pval < .05
+sigdiff <- resTC %>% as.data.frame() %>% filter(padj <.05)
+
+
+resTC %>% as.data.frame() %>% filter(symbol %in% c("SCD","LIPE","CYP11A1","HSD3B2","CYP21A2","CYP11B1","CYP11B2"))
+```
+
+
+```{r plot genes}
+p_NR5A1 <- plotgeneFC(deseq_object = ddsTC, "NR5A1") + ylab(NULL) + xlab(NULL)
+p_SCD <- plotgeneFC(deseq_object = ddsTC, "SCD") + ylab(NULL) + xlab(NULL)
+p_HSL <- plotgeneFC(deseq_object = ddsTC, "LIPE") + ylab(NULL) + xlab(NULL)
+p_CYP11A1 <- plotgeneFC(deseq_object = ddsTC, "CYP11A1") + ylab(NULL) + xlab(NULL)
+p_HSD3B2 <- plotgeneFC(deseq_object = ddsTC, "HSD3B2") + ylab(NULL) + xlab(NULL)
+p_CYP21A2 <- plotgeneFC(deseq_object = ddsTC, "CYP21A2")  + ylab(NULL)  + xlab(NULL)
+p_CYP11B1 <- plotgeneFC(deseq_object = ddsTC, "CYP11B1")  + ylab(NULL)  + xlab(NULL)
+p_CYP11B2 <- plotgeneFC(deseq_object = ddsTC, "CYP11B2")  + ylab(NULL)  + xlab(NULL)
+
+
+
+p_pathway <- plot_grid(p_SCD  + theme(legend.position="none"),
+                       p_HSL  + theme(legend.position="none"),
+                       p_CYP11A1  + theme(legend.position="none"),
+                       p_HSD3B2  + theme(legend.position="none"),
+                       p_CYP21A2  + theme(legend.position="none"),
+                       #p_CYP11B1  + theme(legend.position="none"),
+                       #p_CYP11B2  + theme(legend.position="none"),
+                       p_NR5A1  + theme(legend.position="none"),
+                                          nrow = 3)
+
+#ggsave(plot = p_pathway, device = "pdf", width = 3, height = 5, filename = here("plots","Fig1_RNAseq_FC.pdf"))
+
+```
+
+
+```{r GO analysis}
+
+# using msigdb to get the gene sets
+m_df <- msigdbr(species = "Homo sapiens", subcategory = "BP")
+
+#### BP
+keepBP <- m_df %>% filter(gs_subcat == "GO:BP") %>% dplyr::count(gs_name) %>% filter(n > 9 & n < 100) %>% pull(gs_name)
+
+msigdbList <- m_df %>% filter(gs_subcat == "GO:BP", gs_name %in% keepBP) %>% split(x = .$gene_symbol, f = .$gs_name)
+
+sigdiff$direction <- ifelse(sigdiff$log2FoldChange > 0, "higher", "lower" )
+
+
+# create own gene list
+geneList <- split(sigdiff$symbol, sigdiff$direction)
+
+# genes in universe
+gsize <- resTC %>% na.omit() %>% nrow()
+                
+# calculate overlaps                
+gom.Clustmsigdb <- newGOM(geneList, msigdbList, genome.size = gsize)
+
+clustmsigdb <- -log10(getMatrix(gom.Clustmsigdb, "pval"))
+
+
+clustmsigdb <- clustmsigdb[,colMaxs(clustmsigdb) > 3.4]
+
+
+clustmsigdb[clustmsigdb < -log10(.05)] <- -log10(1)
+clustmsigdb[clustmsigdb > 5] <- 5
+clustmsigdb <- clustmsigdb[sort(rownames(clustmsigdb)),]
+colnames(clustmsigdb) <- gsub("GOBP_","",colnames(clustmsigdb))
+clustmsigdb <- t(clustmsigdb)
+
+clustmsigdb <- clustmsigdb[order(clustmsigdb[,1]),]
+
+
+pheatmap(mat = clustmsigdb, scale = "none", cluster_cols = F, border_color = "black",  clustering_distance_rows = "euclidean", clustering_method = "complete", color = viridis(10, option = "E", direction = 1), filename = here("plots","BP_up_down.pdf"), width = 40, height = 10, fontsize = 24)
+
+
+```
+
+```{r gsea}
+
+geneList <- resTC %>% as.data.frame() %>% pull(log2FoldChange)
+names(geneList) <- resTC %>% as.data.frame() %>% pull(symbol)
+geneList <- sort(geneList, decreasing = TRUE)
+
+library(fgsea)
+  
+fgseaRes <- fgsea(pathways = msiList, 
+                  stats    = geneList,
+                  minSize  = 5,
+                  maxSize  = 5000)
+
+plotEnrichment(msiList[["MSI2_K562_CLIP"]], geneList)
+
+dev.off()
+
+
+```
+
+
+```{r cluster Ro differences}
+
+coef(ddsTC)[,8:12]
+
+betas <- coef(ddsTC)
+topGenes <- head(order(resTC$padj),20)
+mat <- betas[topGenes, ]
+thr <- 3 
+mat[mat < -thr] <- -thr
+mat[mat > thr] <- thr
+pheatmap(mat, breaks=seq(from=-thr, to=thr, length=101),
+         cluster_col=FALSE)
+
+
+
+
+```
+

@@ -1,0 +1,67 @@
+---
+title: "Fig3_PISAVolcano"
+author: "Neel Mukherjee & Kathryn Walters"
+date: "7/12/2022"
+output: html_document
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(ggplot2)
+library(ggrepel)
+library(janitor)
+library(here)
+library(dplyr)
+library(tidyr)
+library(magrittr)
+library(data.table)
+library(readxl)
+library(splitstackshape)
+library(ggpubr)
+library(tximport)
+```
+
+## 1D PISA with Ro
+
+```{r import, message=FALSE, warning=FALSE}
+vol_data <- read_tsv("data/VolPlot_PerseusExport.txt") %>%
+  clean_names()
+
+```
+
+## MSI2 detection
+
+```{r msi2 detection}
+MSI2_pep <- vol_data %>% filter(gene_name=="MSI2") %>% pull(num_unique_peptides)
+
+ggplot(vol_data, aes(num_unique_peptides)) +
+  geom_histogram(bins = 100, fill="black") +
+  scale_x_log10() +
+  geom_vline(xintercept=MSI2_pep, linetype="solid", color = "red") +
+  xlab("number of unique peptides") +
+  theme_classic()
+
+
+```
+
+## Volcano plot
+
+
+```{r volcano, echo=FALSE}
+vol_data$mygenes <- if_else(condition = vol_data$gene_name=="MSI2",true = "MSI2", false = "")
+
+ggplot(vol_data, aes(difference, log_p_value, label = mygenes)) +
+  geom_point(data = vol_data[vol_data$mygenes == "",], color = "black", alpha=.5, size=.5) +
+  geom_text_repel() +
+  geom_point(data = vol_data[vol_data$mygenes != "",], color = "red") +
+  geom_hline(yintercept=-log10(.05), linetype="dashed", color = "black") +
+  ylab("-log10 p-value") +
+  xlab("log2 fold change") +
+  theme_classic() 
+
+table(vol_data$significant)
+
+#ggsave(plot = volcanoPlot, filename = here("plots", "PISAvolcanoPlot_wMSI2point.pdf"), device = "pdf", units = "in", width = 5, height = 4, dpi = 320)
+```

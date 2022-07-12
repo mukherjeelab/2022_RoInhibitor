@@ -1,0 +1,251 @@
+---
+title: "Fig1_CortisolChart"
+author: "Kathryn Walters"
+date: "7/11/2022"
+output: html_document
+---
+
+
+```{r setup, include=TRUE, echo=TRUE, warning=FALSE, message=FALSE}
+
+library(drc) # modeling tools
+library(tidyverse) # your go to set of functions for messing w/data
+library(RColorBrewer) # to make color schemes
+#library(ggpubr) # publication quality ggplots ha ha ha
+library(ggthemes) # additional themes for ggplot-ing
+library(gridExtra) # allows arranging of plots (rows/columns...)
+library(splitstackshape)
+library(ggpubr)
+library(here)
+
+```
+
+```{r function, message=FALSE, warning=FALSE, include=TRUE}
+
+ELISAmodelfit <- function(OD) {
+# Subtract background signal (measured at 540nm) from target signal (measured at 450nm)
+OD$corrected <- OD$OD_450 - OD$OD_540
+OD$Sample <- gsub(pattern = "Std", replacement = "std", x = OD$Sample)
+OD$Sample <- gsub(pattern = "NSB", replacement = "nsb", x = OD$Sample)
+standards <- OD %>% filter(grepl("std", Sample, ignore.case = T)) # one way of creating a new tibble that only contains your standards
+nsb <- OD %>% filter(grepl("nsb", Sample)) # one way of creating a new tibble that only contains your NSBs
+# create a tibble for the actual concentrations by std name
+stdcrvdata <- data.frame(
+  Sample=paste0("std",rep(seq(1,8,1),each=2)),
+  known=rep(c(3200,1600,800,400,200,100,50,0),each=2)
+  )
+# sort standards by name to match the order of 'stdcrvdata' data.
+standards <- standards %>% arrange(Sample) %>% dplyr::select(c(Sample,corrected))
+# sort stdcrvdata by name to match the order of 'standards' data.
+stdcrvdata <- stdcrvdata %>% arrange(Sample)
+# check if they are in the same order (I could change this to well location?)
+stopifnot(identical(as.factor(standards$Sample), as.factor(stdcrvdata$Sample)))
+# combine them together
+stdcrvdata <- data.frame(standards,expected=stdcrvdata$known)
+colnames(stdcrvdata)[2] <- "measured"
+# take out zeros
+stdcrvdata <- stdcrvdata %>% filter(expected > 0)
+stdcrvdata$logconc <-log10(stdcrvdata$expected)# log10 from conc
+# plot(stdcrvdata$logconc, stdcrvdata$measured)
+# model the standard curve using generated points.  plot those points in red.
+fit <- drm(formula =   measured ~ logconc , data = stdcrvdata, fct = LL.4())
+summary(fit)
+# This is a description of the variables and terms defined in the 'fit' model.
+# x = the independent variable (Absorbance) (Concentration, estimated from the Absorbance)
+# y = the dependent variable 
+# The 4 estimated parameters consist of the following:
+# the minimum value that can be obtained. (this is the ABS at conc. 0)
+# a = fit$coefficients[2] 
+# d = the maximum value that can be obtained (i.e. what happens at infinite dose)
+# c = the point of inflection (i.e. the point on the S shaped curve halfway between a and d)
+# b = Hill’s slope of the curve (i.e. this is related to the steepness of the curve at point c).
+# Generate points from  model. Pick range from logconc
+x <- seq(from = 0, to = 4, length=100)
+# from OD ~ d + (a - d)/(1 + (logconc/cc)^b)
+y <- (fit$coefficients[2]+ (fit$coefficients[3]- fit$coefficients[2])/(1+(x/fit$coefficients[4])^ fit$coefficients[1])) 
+# remove standards and NSB wells leaving only experimental measurements
+OD <- OD %>% filter(!grepl("std|nsb", Sample))
+# here we are applying the equation described above to...
+OD$loganswer<- fit$coefficients[4]*( (
+    (-1* fit$coefficients[3]+ OD$corrected)/
+      (fit$coefficients[2]-OD$corrected))^(1/ fit$coefficients[1])
+  )
+
+
+OD$conc <- 10^OD$loganswer
+
+OD$below <- OD$conc < min(stdcrvdata$expected)
+OD$above <- OD$conc > max(stdcrvdata$expected)
+plot(x = stdcrvdata$logconc, y = stdcrvdata$measured, main="log standard curve",
+  xlim = c(min(0),max(5)),
+  ylim = c(min(0),max(1.3))
+     ) 
+lines(x,y, lty="dotted", col="red") 
+lines(OD$loganswer, OD$corrected, type="points", col="blue")
+
+#fixing the media only naming pattern
+OD$Sample <- gsub(pattern = "mediaOnly", replacement = "media_NA", x = OD$Sample)
+#making two columns to describe the treatment vs the stimulation status
+OD <- separate(data = OD, col = Sample, into = c("tx","dil","stim"), sep = "_")
+#telling it that the stim category should be referenced to the unstimulated category
+OD$stim <- relevel(factor(OD$stim), ref = "us")
+#telling it that the treatment should be referenced to water
+OD$tx <- relevel(factor(OD$tx), ref = "DMSO")
+#creating a value bg in which the average of the media columns is taken
+bg <- OD %>% filter(tx=="media") %>% summarise(mean(na.omit(conc))) %>% pull()
+#creating a concentration column that just subtracts the bg value
+OD$conc <- OD$conc - bg
+#now getting rid of the media values
+OD <- OD %>% filter(tx!="media")
+
+OD$tx <- factor(OD$tx, levels = c("DMSO","0.5uM","1uM","2.5uM","5uM","10uM"))
+
+
+return(OD)
+}
+
+```
+
+
+
+
+```{r read data, include=TRUE, warning=FALSE, message=FALSE}
+
+# Read in data file. OD is ELISA file. PB is presto blue file.
+OD <- read_csv(here("data", "KAB039_Cortisol_ELISAall2.csv"))
+colnames(OD) <- c("Sample","Well","OD_450","OD_540","OD_570","viability_1hr", "viability_2hr")
+OD <- OD %>% select(-viability_2hr)
+
+
+
+```
+
+
+```{r ELISA modeling, include=TRUE, warning=FALSE, message=FALSE}
+OD <- ELISAmodelfit(OD)
+```
+
+
+```{r}
+OD$conc2 <- OD$conc * as.numeric(OD$dil)
+OD1 <- OD %>% filter(OD$dil != 5)
+OD5 <- OD %>% filter(OD$dil != 1)
+
+OD5$Ro_conc <- OD5$tx
+OD5$Ro_conc <- gsub(x = OD5$Ro_conc, pattern = "uM", replacement = "")
+OD5$Ro_conc <- as.numeric(gsub("DMSO","0", OD5$Ro_conc))
+
+DMSOmeanstim <- OD5 %>% filter(tx == "DMSO") %>% filter(stim == "stim") %>% select(conc2) %>% summarise(mean(conc2)) %>% pull()
+
+DMSOmeanUS <- OD5 %>% filter(tx == "DMSO") %>% filter(stim == "us") %>% select(conc2) %>% summarise(mean(conc2)) %>% pull()
+
+OD5stim <- OD5 %>% filter(stim == "stim")
+
+OD5us <- OD5 %>% filter(stim == "us")
+
+OD5stim$percent <- OD5stim$conc2/DMSOmeanstim*100
+OD5us$percent <- OD5us$conc2/DMSOmeanUS*100
+
+OD5stim$percent <- as.numeric(OD5stim$percent)
+OD5us$percent <- as.numeric(OD5us$percent)
+
+dmso_PB <- OD5stim %>% filter(tx=="DMSO") %>% select(viability_1hr) %>% summarise(mean(viability_1hr)) %>% pull()
+dmso_PB_us <- OD5us %>% filter(tx=="DMSO") %>% select(viability_1hr) %>% summarise(mean(viability_1hr)) %>% pull()
+
+OD5stim$pPB <- 100*OD5stim$viability_1hr/dmso_PB
+OD5stim$pPB <- as.numeric(OD5stim$pPB)
+
+OD5us$pPB <- 100*OD5us$viability_1hr/dmso_PB_us
+OD5us$pPB <- as.numeric(OD5us$pPB)
+
+
+p_cort_per_stim <- ggline(OD5stim, x = "Ro_conc", y = "percent", ylab = "% Cortisol", add = "mean_sd", xlab = "[Ro] uM") + rremove("legend") + rotate_x_text(60) + geom_hline(yintercept = 100, linetype = "dotted", color = "black")
+
+p_cort_per_stim <- p_cort_per_stim + ylim(0,125)
+p_cort_per_stim
+
+p_cort_perPB_stim <- ggline(OD5stim, x = "Ro_conc", y = "pPB", ylab = "% Viability", add = "mean_sd", xlab = "[Ro] uM") + rremove("legend") + rotate_x_text(60) + geom_hline(yintercept = 100, linetype = "dotted", color = "black")
+
+p_cort_perPB_stim <- p_cort_perPB_stim + ylim(0,125)
+p_cort_perPB_stim
+
+
+p_all_PR <- cowplot::plot_grid(
+  p_cort_per_stim + theme(legend.position="none"),
+  p_cort_perPB_stim + theme(legend.position="none"),
+  align = 'vh',
+  hjust = -1,
+  nrow = 1
+  )
+
+p_all_PR
+
+p_cort_per_us <- ggline(OD5us, x = "Ro_conc", y = "percent", ylab = "% Cortisol", add = "mean_sd", xlab = "[Ro] uM") + rremove("legend") + rotate_x_text(60) + geom_hline(yintercept = 100, linetype = "dotted", color = "black")
+
+p_cort_per_us <- p_cort_per_us + ylim(0,125)
+p_cort_per_us
+
+
+p_cort_pPB_us <- ggline(OD5us, x = "Ro_conc", y = "pPB", ylab = "% Viability", add = "mean_sd", xlab = "[Ro] uM") + rremove("legend") + rotate_x_text(60) + geom_hline(yintercept = 100, linetype = "dotted", color = "black")
+
+p_cort_pPB_us <- p_cort_pPB_us + ylim(0,125)
+p_cort_pPB_us
+
+p_all_PR_us <- cowplot::plot_grid(
+  p_cort_per_us + theme(legend.position="none"),
+  p_cort_pPB_us + theme(legend.position="none"),
+  align = 'vh',
+  hjust = -1,
+  nrow = 1
+  )
+
+p_all_PR_us
+```
+
+
+```{r IC50 values, warning=FALSE, message=FALSE}
+#Fit for pAldo
+fit <- drm(formula =   percent ~ Ro_conc , data = OD5stim, fct = LL.4())
+summary(fit)
+
+# This is a description of the variables and terms defined in the 'fit' model.
+# x = the independent variable (percent aldo?)
+# y = the dependent variable 
+# The 4 estimated parameters consist of the following:
+# the minimum value that can be obtained. (this is the ABS at conc. 0)
+# a = fit$coefficients[2] 
+# d = the maximum value that can be obtained (i.e. what happens at infinite dose)
+# c = the point of inflection (i.e. the point on the S shaped curve halfway between a and d)
+# b = Hill’s slope of the curve (i.e. this is related to the steepness of the curve at point c).
+# Generate points from  model. Pick range from logconc
+x <- seq(from = 0, to = 10, length=100)
+# from OD ~ d + (a - d)/(1 + (logconc/cc)^b)
+y <- (fit$coefficients[2]+ (fit$coefficients[3]- fit$coefficients[2])/(1+(x/fit$coefficients[4])^ fit$coefficients[1])) 
+
+plot(x = OD5stim$Ro_conc, y = OD5stim$percent, main="log standard curve") 
+lines(x,y, lty="dotted", col="red") 
+
+
+#Fit for pPB
+fit <- drm(formula =   pPB ~ Ro_conc , data = OD5stim, fct = LL.4())
+summary(fit)
+
+# This is a description of the variables and terms defined in the 'fit' model.
+# x = the independent variable (percent aldo?)
+# y = the dependent variable 
+# The 4 estimated parameters consist of the following:
+# the minimum value that can be obtained. (this is the ABS at conc. 0)
+# a = fit$coefficients[2] 
+# d = the maximum value that can be obtained (i.e. what happens at infinite dose)
+# c = the point of inflection (i.e. the point on the S shaped curve halfway between a and d)
+# b = Hill’s slope of the curve (i.e. this is related to the steepness of the curve at point c).
+# Generate points from  model. Pick range from logconc
+x <- seq(from = 0, to = 10, length=100)
+# from OD ~ d + (a - d)/(1 + (logconc/cc)^b)
+y <- (fit$coefficients[2]+ (fit$coefficients[3]- fit$coefficients[2])/(1+(x/fit$coefficients[4])^ fit$coefficients[1])) 
+
+plot(x = OD5stim$Ro_conc, y = OD5stim$pPB, main="log standard curve") 
+lines(x,y, lty="dotted", col="red") 
+```
+
+
