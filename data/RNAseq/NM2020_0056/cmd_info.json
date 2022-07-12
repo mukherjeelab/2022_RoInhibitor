@@ -1,0 +1,12 @@
+{
+    "salmon_version": "0.13.1",
+    "index": "/beevol/home/neellab/genomes/human/hg38/indices/salmon_gencodev26_noprimary/gencodev26",
+    "libType": "A",
+    "threads": "10",
+    "mates1": "/dev/fd/63",
+    "mates2": "/dev/fd/62",
+    "allowDovetail": [],
+    "validateMappings": [],
+    "output": "salmon/NM2020_0056",
+    "auxDir": "aux_info"
+}
