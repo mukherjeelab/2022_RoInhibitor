@@ -126,10 +126,10 @@ return(OD)
 ```{r read data, include=TRUE, warning=FALSE, message=FALSE}
 
 # Read in first set of data files. OD is ELISA file. PB is presto blue file. FR is fluroreporter file - this first experiment doesn't have any FR data. 
-OD1 <- read_csv(here("data", "20190719_Ro08-2750Titration_ELISA.csv"))
+OD1 <- read_csv(here("data", "ELISA", "20190719_Ro08-2750Titration_ELISA.csv"))
 colnames(OD1) <- c("Sample","Well","OD_450","OD_540","OD_570")
 
-pb1 <- read_csv(here("data", "20190718_Ro08-2750Titration_PB1.csv"))[,2:3]
+pb1 <- read_csv(here("data", "ELISA", "20190718_Ro08-2750Titration_PB1.csv"))[,2:3]
 colnames(pb1)[2] <- c("viability_24")
 
 # join presto blue measurements with ELISA measurements
@@ -139,13 +139,13 @@ OD1$FR_24 <- rep(NA,nrow(OD1))
 
 
 # Read in second set of data files. OD is ELISA file. PB is presto blue file. FR is fluroreporter file. 
-OD2 <- read_csv(here("data", "20200131_Ro08-2750Titration_ELISA.csv"))
+OD2 <- read_csv(here("data", "ELISA", "20200131_Ro08-2750Titration_ELISA.csv"))
 colnames(OD2) <- c("Sample","Well","OD_450","OD_540","OD_570")
 
-pb2 <- read_csv(here("data", "20200130_Ro08-2750Titration_PB1.csv"))[,2:3]
+pb2 <- read_csv(here("data", "ELISA", "20200130_Ro08-2750Titration_PB1.csv"))[,2:3]
 colnames(pb2)[2] <- c("viability_24")
 
-fr2 <- read_csv(here("data", "20200131_Ro08-2750Titration_FR.csv"))
+fr2 <- read_csv(here("data", "ELISA", "20200131_Ro08-2750Titration_FR.csv"))
 colnames(fr2) <- c("Sample","Well","FR_24")
 
 # join presto blue and fluorReporter measurements with ELISA measurements
@@ -154,13 +154,13 @@ OD2 <- left_join(OD2, fr2[,-1], by = "Well")
 
 
 # Read in third set of data files. OD is ELISA file. PB is presto blue file. FR is fluroreporter file. 
-OD3 <- read_csv(here("data", "20200305_Ro08-2750Titration_ELISA.csv"))
+OD3 <- read_csv(here("data", "ELISA", "20200305_Ro08-2750Titration_ELISA.csv"))
 colnames(OD3) <- c("Sample","Well","OD_450","OD_540","OD_570")
 
-pb3 <- read_csv(here("data", "20200304_Ro08-2750Titration_PB1.csv"))[,2:3]
+pb3 <- read_csv(here("data", "ELISA", "20200304_Ro08-2750Titration_PB1.csv"))[,2:3]
 colnames(pb3)[2] <- c("viability_24")
 
-fr3 <- read_csv(here("data", "20200305_Ro08-2750Titration_FR.csv"))
+fr3 <- read_csv(here("data", "ELISA", "20200305_Ro08-2750Titration_FR.csv"))
 colnames(fr3) <- c("Sample","Well","FR_24")
 
 # join presto blue measurements with ELISA measurements
