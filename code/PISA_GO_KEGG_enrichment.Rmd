@@ -1,0 +1,77 @@
+---
+title: "PISA GO and KEGG"
+author: "Marcin Sajek"
+date: "April 28, 2022"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r loading required libraries, echo=FALSE, warning=FALSE,message=FALSE}
+library(dplyr)
+library(tidyverse)
+library(magrittr)
+library(data.table)
+library(clusterProfiler)
+library(org.Hs.eg.db)
+library(here)
+```
+
+reading PISA data and filtering significant ones
+
+```{r warning=FALSE,message=FALSE}
+goi <- fread(here('data', 'VolPlot_PerseusExport.txt')) %>%
+  filter(Significant == '+') %>%
+  dplyr::select(c('Accession')) %>%
+  deframe()
+```
+
+go enrichment
+
+```{r warning=FALSE,message=FALSE}
+enrPISA <- enrichGO(gene = goi,
+                    OrgDb = org.Hs.eg.db,
+                    keyType = 'UNIPROT',
+                    ont = 'ALL',
+                    pvalueCutoff = 0.05,
+                    pAdjustMethod = 'fdr',
+                    minGSSize = 3,
+                    maxGSSize = 800,
+                    readable = T)
+
+BP <- as_tibble(enrPISA) %>%
+  filter(ONTOLOGY == 'BP')
+#fwrite(BP, here('data','PISA_GO_BP.tsv'), sep = '\t')
+
+MF <- as_tibble(enrPISA) %>%
+  filter(ONTOLOGY == 'MF')
+#fwrite(MF, here('data','PISA_GO_MF.tsv'), sep = '\t')
+
+CC <- as_tibble(enrPISA) %>%
+  filter(ONTOLOGY == 'CC')
+#fwrite(CC, here('data','PISA_GO_CC.tsv'), sep = '\t')
+```
+
+KEGG enrichment
+
+```{r warning=FALSE,message=FALSE}
+ids <- bitr(goi, fromType = 'UNIPROT', toType = c('ENTREZID','ENSEMBL'), OrgDb = org.Hs.eg.db) 
+
+kegg_goi <- ids %>%
+  dplyr::select(c('ENTREZID')) %>%
+  distinct() %>%
+  na.omit() %>%
+  deframe()
+
+enrPISA_kegg <- enrichKEGG(gene = kegg_goi,
+           organism = 'hsa',
+           pvalueCutoff = 0.05,
+           pAdjustMethod = 'fdr',
+           minGSSize = 3,
+          maxGSSize = 800)
+
+kegg_res <- as_tibble(enrPISA_kegg)
+#fwrite(kegg_res, here('data','PISA_KEGG_enrich.tsv'), sep = '\t')
+```
