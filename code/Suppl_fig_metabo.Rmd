@@ -1,0 +1,163 @@
+---
+title: "metabo data analysis final"
+author: "Marcin Sajek"
+date: "April 28, 2022"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r loading packages, echo=FALSE, warning=FALSE, message=FALSE}
+library(dplyr)
+library(tidyverse)
+library(data.table)
+library(magrittr)
+library(matrixStats)
+library(broom)
+library(purrr)
+library(ggpubr)
+library(ggfortify)
+library(pheatmap)
+library(viridis)
+library(here)
+```
+
+Defining functions:
+1. PCA plot
+2. Heatmap of significantly changed metabolites
+
+```{r functions, warning=FALSE, message=FALSE}
+PCA_plot <- function (count_data, metadata) 
+{
+    rownames(count_data) <- count_data$Metabolite
+    count_data$Metabolite<- NULL
+    data_Int <- count_data[sapply(count_data, function(x) is.numeric(x))]
+    data_Transpose <- as.data.frame(t(data_Int))
+    data_Transpose <- as.data.frame(cbind(Sample = rownames(data_Transpose), 
+        data_Transpose))
+    data_Transpose$Treatment = metadata$Treatment[match(metadata$Sample, 
+        data_Transpose$Sample)]
+    data_Numeric <- data_Transpose[, !names(data_Transpose) %in% 
+        c("Treatment", "Sample")]
+    data_Numeric <- data.frame(lapply(data_Numeric, function(x) as.numeric(as.character(x))), 
+        check.names = F, row.names = rownames(data_Numeric))
+    Plot <- autoplot(prcomp(data_Numeric), data = data_Transpose, 
+        colour = c('Treatment') , label = T, label.size = 2.5)+ 
+      scale_color_manual(values = c('black','red'))+
+      theme_pubr()+
+      theme(panel.grid = element_blank())
+    return(Plot)
+}
+
+get_log2fcHeatmap <- function (count_data, metabolites)
+{
+  ct_df <- count_data %>% 
+    as_tibble() %>%
+    filter(KEGG %in% metabolites) %>%
+    pivot_longer(cols = 3:37, names_to = "variable", values_to = "valueRE") %>%
+    separate(col = variable, into = c("Treatment","Time", "Rep"), sep = "_") %>%
+    aggregate(valueRE ~Metabolite+KEGG+Treatment+Time, data = ., mean) %>%
+    pivot_wider(names_from = 'Treatment', values_from = 'valueRE') %>% 
+    mutate(log2FC = log2(Ro/DM)) %>% 
+    pivot_wider(id_cols = c('Metabolite', 'KEGG'), names_from = 'Time', values_from =     log2FC) %>%
+    dplyr::select(c(1,7,8,4:6)) %>%
+    set_colnames(c('Metabolite', 'log2fc_4', 'log2fc_8', 'log2fc_12', 'log2fc_16', 'log2fc_24')) %>%
+    column_to_rownames('Metabolite') %>%
+    as.matrix()
+  
+  htmp <- pheatmap(ct_df,
+                   clustering_distance_rows = "euclidean",
+                   clustering_method = "ward.D2",
+                   cluster_cols = F,
+                   color = viridis(10, option = "E", direction = 1),
+                   cellheight = 10,
+                   border_color = "black",
+                   main="log2FoldChange Ro/DMSO")
+  return(htmp)
+}
+```
+
+loading the data and perform PCA analysis (one clear outlier to remove visible on PCA plot - Ro_12_1)
+
+```{r warning=FALSE, message=FALSE}
+metabolomics_count_df <- read_csv(here('data','timecourse_Ro_cells_metabolomics.csv'))
+metabolomics_metadata <- read_csv(here('data','timecourse_Ro_cells_metabolomics_metadata.csv'))
+
+counts_log <- log(metabolomics_count_df[,3:38]) %>%
+  cbind(metabolomics_count_df[,1:2], .)
+PCA_plt <- PCA_plot(count_data = counts_log, metadata = metabolomics_metadata)
+
+pdf(here('plots','PCA_metabo.pdf'))
+PCA_plt
+dev.off()
+
+metabolomics_count_df_final <- metabolomics_count_df[,-c(24)] # removing outlier identified in PCA analysis
+```
+
+Applying linear model to find metabolites with significant change. We are interested in metabolites that were changed after Ro treatment. Time is treated as factor here.
+
+```{r linear_model, warning=FALSE, message=FALSE}
+#transforming data
+lm_table <- as_tibble(metabolomics_count_df) %>% 
+  dplyr::select(-c(3:8)) %>%
+  pivot_longer(cols = 3:32, names_to = "variable", values_to = "valueRE") %>%
+  separate(variable, into = c("Treatment","Time", "Rep"), sep = "_") %>%
+  mutate_if(is.character, as.factor)
+
+#applying linear model
+lm_metabo <- as_tibble(lm_table) %>% 
+  dplyr::select(-Metabolite) %>%
+  nest(data = -KEGG) %>%
+  mutate(fit = map(data, ~ lm(valueRE ~ Time*Treatment, data = .x)), anova = lapply(fit, anova), tidied = map(anova, tidy)) %>%
+  unnest(tidied)
+
+#selecting Ro treatment susceptible metabolites
+Ro_metabs <- lm_metabo %>%
+  dplyr::select(c('KEGG','term','p.value')) %>%
+  mutate(p.adjust = p.adjust(p.value, 'fdr')) %>%
+  filter(term == 'Treatment' & p.adjust < 0.05) %>%
+  dplyr::select(c('KEGG')) %>%
+  mutate_if(is.factor, as.character) %>%
+  deframe()
+
+Ro_htmp <- get_log2fcHeatmap(metabolomics_count_df, Ro_metabs)
+
+pdf(here('plots','Suppl_metabo_Ro_treat_htmp.pdf'))
+Ro_htmp
+dev.off()
+```
+
+TCA cycle looks the most interesting from PISA perspective. 
+Checking how Ro-affected TCA metabolites are changing during treatment timecourse.
+
+```{r warning=FALSE, message=FALSE}
+TCA_metabs <- c('C00158','C00026','C00042','C00122','C00149','C00036')
+ln_plt_df <- as_tibble(metabolomics_count_df) %>% 
+    filter(KEGG %in% TCA_metabs) %>%
+    mutate(norm_denominator = rowMeans(.[,3:8])) %>% 
+    mutate_at(c(9:37), funs(./norm_denominator)) %>%
+    mutate_at(c(3:8), funs(./.)) %>%
+    dplyr::select(c(1,3:37))  %>%
+    pivot_longer(cols = 2:36, names_to = "variable", values_to = "Fold_change") %>%
+    separate(col = variable, into = c("Treatment", 'Time', "Rep"), sep = "_") %>%
+    mutate_at(c(4), funs(as.numeric)) %>%
+    mutate_if(is.character, as.factor) %>%
+    mutate(Time = factor(Time, levels = c(0,4,8,12,16,24)),
+           Metabolite = factor(Metabolite, levels = c('Citrate','2-Oxoglutarate','Succinate','Fumarate','Malate','Oxaloacetate')),
+           Treatment =  gsub('DM','DMSO', Treatment))
+
+TCA_plt <- ggline(data =  ln_plt_df,
+                     x = "Time",
+                     y = "Fold_change", 
+                     color = "Treatment",
+                     palette = c('black','red'),
+                     add = c("mean_se", "jitter"), 
+                     ylab = "fold change",
+                     facet.by = 'Metabolite', nrow = 2)
+
+pdf(here('plots','Suppl_metabo_TCA_metabs_all_ln_plt.pdf'), width = 8, height = 6)
+TCA_plt
+dev.off()
+```
