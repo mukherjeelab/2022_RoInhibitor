@@ -21,7 +21,7 @@ library(here)
 
 reading PISA data and filtering significant ones
 
-```{r warning=FALSE,message=FALSE}
+```{r reading_data, warning=FALSE,message=FALSE}
 goi <- fread(here('data', 'VolPlot_PerseusExport.txt')) %>%
   filter(Significant == '+') %>%
   dplyr::select(c('Accession')) %>%
@@ -30,7 +30,7 @@ goi <- fread(here('data', 'VolPlot_PerseusExport.txt')) %>%
 
 go enrichment
 
-```{r warning=FALSE,message=FALSE}
+```{r go, warning=FALSE,message=FALSE}
 enrPISA <- enrichGO(gene = goi,
                     OrgDb = org.Hs.eg.db,
                     keyType = 'UNIPROT',
@@ -56,7 +56,7 @@ CC <- as_tibble(enrPISA) %>%
 
 KEGG enrichment
 
-```{r warning=FALSE,message=FALSE}
+```{r kegg, warning=FALSE,message=FALSE}
 ids <- bitr(goi, fromType = 'UNIPROT', toType = c('ENTREZID','ENSEMBL'), OrgDb = org.Hs.eg.db) 
 
 kegg_goi <- ids %>%
