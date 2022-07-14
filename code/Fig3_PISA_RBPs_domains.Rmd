@@ -1,0 +1,90 @@
+---
+title: "PISA RBPs and domains"
+author: "Marcin Sajek"
+date: "2022-07-14"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r loading required libraries, echo=FALSE, warning=FALSE,message=FALSE}
+library(dplyr)
+library(tidyverse)
+library(magrittr)
+library(data.table)
+library(readxl)
+library(splitstackshape)
+library(ggpubr)
+library(here)
+```
+
+reading and filtering PISA data
+
+```{r read_pisa, warning=FALSE,message=FALSE}
+pisa <- fread(here('data', 'VolPlot_PerseusExport.txt')) %>%
+  filter(Significant == '+') %>%
+  dplyr::select(-c(1,5,6,7,10:24))
+```
+
+reading and filtering Steffie table with RBPs and domains (PMID: 25365966 suppl table 2)
+
+```{r read_rbp, warning=FALSE,message=FALSE}
+rbps <- read_excel(here('data', 'table_2_Steffie.xlsx'), sheet = 'RBP table') %>%
+  dplyr::select(c(1,3,4:6)) %>%
+  set_colnames(c('Gene-Name', 'ENSEMBL_gene_id', 'ENSEMBL_protein_id','n_domains', 'domains' ))
+```
+
+extracting RBPs and domains from PISA data
+
+```{r extract_rbp, warning=FALSE,message=FALSE}
+pisa_rbp <- pisa %>%
+  filter(`Gene-Name` %in% rbps$`Gene-Name`) %>%
+  left_join(.,rbps) %>%
+  dplyr::select(c(1,2,5,16:19)) %>%
+  cSplit(.,'domains',',', direction = 'long') %>%
+  mutate(domains = gsub('\\]','',domains), 
+         domains = gsub('\\[',';',domains)) %>%
+  separate(domains, into = c('domain', 'counts'), sep = ';') %>%
+  mutate(domain = if_else(`Gene-Name` == 'SRP68', 'SRP68-RBD',domain), 
+         counts = if_else(`Gene-Name` == 'SRP68', '1',counts)) %>%
+  mutate(domain = factor(domain), 
+         `Gene-Name` = factor(`Gene-Name`), 
+         counts = as.numeric(counts),
+         group = factor(case_when(n_domains == 1 & counts == 1 ~ 'single RBD',
+                           !n_domains == 1 & n_domains == counts ~ 'single RBD repeated',
+                           T ~ 'combination of RBDs')))
+```
+
+domains barplot
+
+```{r plot_domains, warning=FALSE,message=FALSE}
+rbps_vs_domains <- pisa_rbp %>% 
+  mutate(grouping_var = paste0(domain,';',group)) %>%
+  group_by(grouping_var) %>%
+  summarise(counts = n()) %>%
+  separate(grouping_var, into = c('domain','group'), sep = ';') %>%
+  group_by(domain) %>%
+  mutate(tmp_cnt = n()) %>%
+  filter(tmp_cnt > 1 | counts > 1) %>%
+  arrange(desc(counts)) %>%
+  mutate(domain = factor(domain, levels = c('RRM_1','zf-CCCH','Helicase_C','DEAD','WD40',
+                                            'RRM_6','Xpo1','MIF4G','CBFNT','zf-C2H2_jaz',
+                                            'WHEP-TRS','tRNA-synt_2','tRNA-synt_1b',
+                                            'tRNA_anti-codon','TPR_12','Surp','SAP','S1',
+                                            'PUA','MMR_HSR1','LSM','KH_1','IBN_N','G-patch',
+                                            'DUF2051','CAF1','AAA_12','AAA_11' )),
+         group = factor(group, levels = c('single RBD','single RBD repeated','combination of RBDs')))
+
+rbps_vs_domains_barplt <- ggbarplot(rbps_vs_domains, x = 'domain', y = 'counts', fill = 'group', color = 'group', palette = 'Paired')+
+  rremove('xlab')+
+  rremove('ylab')+
+  rremove('legend.title') +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1)) +
+  theme(legend.position = 'right')
+
+pdf(here('plots','Fig3_PISA_rbps_vs_domains.pdf'))
+rbps_vs_domains_barplt
+dev.off()
+```
