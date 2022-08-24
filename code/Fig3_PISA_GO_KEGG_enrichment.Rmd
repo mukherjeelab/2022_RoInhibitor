@@ -3,6 +3,8 @@ title: "PISA GO and KEGG"
 author: "Marcin Sajek"
 date: "April 28, 2022"
 output: html_document
+editor_options: 
+  chunk_output_type: console
 ---
 
 ```{r setup, include=FALSE}
@@ -19,7 +21,7 @@ library(org.Hs.eg.db)
 library(here)
 ```
 
-reading PISA data and filtering significant ones
+## reading PISA data and filtering significant ones
 
 ```{r reading_data, warning=FALSE,message=FALSE}
 goi <- fread(here('data', 'VolPlot_PerseusExport.txt')) %>%
@@ -28,7 +30,7 @@ goi <- fread(here('data', 'VolPlot_PerseusExport.txt')) %>%
   deframe()
 ```
 
-go enrichment
+## go enrichment
 
 ```{r go, warning=FALSE,message=FALSE}
 enrPISA <- enrichGO(gene = goi,
@@ -49,12 +51,30 @@ MF <- as_tibble(enrPISA) %>%
   filter(ONTOLOGY == 'MF')
 #fwrite(MF, here('data','PISA_GO_MF.tsv'), sep = '\t')
 
+MF <- MF %>%
+  arrange(desc(p.adjust)) %>%               # sort your dataframe
+  mutate(Description = factor(Description, unique(Description))) # reset your factor-column based on that order
+
+MFlolli <- ggplot(MF, aes(x=Description, y=-log10(p.adjust))) +
+  geom_segment( aes(x=Description, xend=Description, yend=p.adjust), color="black") +
+  geom_point( color="red", size=4) +
+  theme_light() + coord_flip() +
+  theme(
+    panel.grid.major.x = element_blank(),
+    panel.border = element_blank(),
+    axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)
+  ) +
+  xlab("") +
+  ylab("Adjusted -log10(p-Value)")
+
+ggsave(plot = MFlolli, filename = here("plots", "Fig3_MF_goEnrich.pdf"), width = 7, height = 3)
+
 CC <- as_tibble(enrPISA) %>%
   filter(ONTOLOGY == 'CC')
 #fwrite(CC, here('data','PISA_GO_CC.tsv'), sep = '\t')
 ```
 
-KEGG enrichment
+## KEGG enrichment
 
 ```{r kegg, warning=FALSE,message=FALSE}
 ids <- bitr(goi, fromType = 'UNIPROT', toType = c('ENTREZID','ENSEMBL'), OrgDb = org.Hs.eg.db) 
@@ -73,5 +93,21 @@ enrPISA_kegg <- enrichKEGG(gene = kegg_goi,
           maxGSSize = 800)
 
 kegg_res <- as_tibble(enrPISA_kegg)
+
+kegg_res <- kegg_res %>%
+  arrange(desc(p.adjust)) %>%               # sort your dataframe
+  mutate(Description = factor(Description, unique(Description))) # reset your factor-column based on that order
+
+ggplot(kegg_res, aes(x=Description, y=p.adjust)) +
+  geom_segment( aes(x=Description, xend=Description, y=0, yend=p.adjust), color="black") +
+  geom_point( color="red", size=4) +
+  theme_light() + coord_flip() +
+  theme(
+    panel.grid.major.x = element_blank(),
+    panel.border = element_blank(),
+    axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)
+  ) +
+  xlab("") +
+  ylab("Adjusted p-Value")
 #fwrite(kegg_res, here('data','PISA_KEGG_enrich.tsv'), sep = '\t')
 ```

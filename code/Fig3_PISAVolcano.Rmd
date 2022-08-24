@@ -3,6 +3,8 @@ title: "Fig3_PISAVolcano"
 author: "Neel Mukherjee & Kathryn Walters"
 date: "7/12/2022"
 output: html_document
+editor_options: 
+  chunk_output_type: console
 ---
 
 
@@ -52,7 +54,7 @@ ggplot(vol_data, aes(num_unique_peptides)) +
 ```{r volcano, echo=FALSE}
 vol_data$mygenes <- if_else(condition = vol_data$gene_name=="MSI2",true = "MSI2", false = "")
 
-ggplot(vol_data, aes(difference, log_p_value, label = mygenes)) +
+volcanoPlot <- ggplot(vol_data, aes(difference, log_p_value, label = mygenes)) +
   geom_point(data = vol_data[vol_data$mygenes == "",], color = "black", alpha=.5, size=.5) +
   geom_text_repel() +
   geom_point(data = vol_data[vol_data$mygenes != "",], color = "red") +
@@ -63,5 +65,5 @@ ggplot(vol_data, aes(difference, log_p_value, label = mygenes)) +
 
 table(vol_data$significant)
 
-#ggsave(plot = volcanoPlot, filename = here("plots", "PISAvolcanoPlot_wMSI2point.pdf"), device = "pdf", units = "in", width = 5, height = 4, dpi = 320)
+ggsave(plot = volcanoPlot, filename = here("plots", "Fig3_PISAvolcanoPlot_wMSI2point.pdf"), device = "pdf", units = "in", width = 5, height = 4, dpi = 320)
 ```

@@ -150,7 +150,7 @@ dmso_A_aldo <- RoResData %>% filter(batch=="A" & Ro_conc==0) %>% select(conc) %>
 dmso_B_aldo <- RoResData %>% filter(batch=="B" & Ro_conc==0) %>% select(conc) %>% summarise(mean(conc)) %>% pull()
 
 tmp <- mutate(RoResData, pAldo = ifelse(batch == "A", 100*conc/dmso_A_aldo, 
-                                       ifelse(batch == "B", 100*conc/dmso_B_aldo)))
+                                       ifelse(batch == "B", 100*conc/dmso_B_aldo, "")))
 tmp$pAldo <- as.numeric(tmp$pAldo)
 
 
@@ -205,7 +205,7 @@ p_all_PR <- cowplot::plot_grid(
   )
 
 p_all_PR
-#ggsave(plot = p_all_PR, filename = "./plots/all_percent_sd.pdf", width = 12, height = 3)
+ggsave(plot = p_all_PR, filename = here("plots", "Fig2_RoRes_percent_sd.pdf"), width = 6, height = 3)
 
 
 ```

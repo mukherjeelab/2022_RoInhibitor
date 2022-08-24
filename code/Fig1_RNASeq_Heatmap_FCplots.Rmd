@@ -180,8 +180,6 @@ p_pca <- ggplot(pca_plot_data, aes(x=-PC2, y=-PC1, color=condition)) +
 ```
 
 
-
-
 ```{r deg analysis}
 msi_metadata[1:4,2] <- c("Ro","Ro","DMSO","DMSO")
 msi_metadata[3:4,4] <- c("Rep1","Rep2")
@@ -245,7 +243,7 @@ resTC$biotype <- mcols(ddsTC)$biotype
 sigdiff <- resTC %>% as.data.frame() %>% filter(padj <.05)
 
 
-resTC %>% as.data.frame() %>% filter(symbol %in% c("SCD","LIPE","CYP11A1","HSD3B2","CYP21A2","CYP11B1","CYP11B2"))
+sigTable <- resTC %>% as.data.frame() %>% filter(symbol %in% c("SCD","LIPE","CYP11A1","HSD3B2","CYP21A2","CYP11B1","CYP11B2", "NR5A1"))
 ```
 
 
@@ -262,16 +260,15 @@ p_CYP11B2 <- plotgeneFC(deseq_object = ddsTC, "CYP11B2")  + ylab(NULL)  + xlab(N
 
 
 p_pathway <- plot_grid(p_SCD  + theme(legend.position="none"),
-                       p_HSL  + theme(legend.position="none"),
                        p_CYP11A1  + theme(legend.position="none"),
                        p_HSD3B2  + theme(legend.position="none"),
                        p_CYP21A2  + theme(legend.position="none"),
                        #p_CYP11B1  + theme(legend.position="none"),
-                       #p_CYP11B2  + theme(legend.position="none"),
+                       p_CYP11B2  + theme(legend.position="none"),
                        p_NR5A1  + theme(legend.position="none"),
                                           nrow = 3)
 
-#ggsave(plot = p_pathway, device = "pdf", width = 3, height = 5, filename = here("plots","Fig1_RNAseq_FC.pdf"))
+ggsave(plot = p_pathway, device = "pdf", width = 3, height = 5, filename = here("plots","Fig1_RNAseq_FC.pdf"))
 
 ```
 

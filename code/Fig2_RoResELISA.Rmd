@@ -100,7 +100,7 @@ OD$Sample <- gsub(pattern = "mediaOnly", replacement = "media_NA", x = OD$Sample
 
 OD <- separate(data = OD, col = Sample, into = c("tx","stim"), sep = "_")
 
-OD$stim <- relevel(factor(OD$stim), ref = "unstim")
+OD$stim <- relevel(factor(OD$stim), ref = "us")
 OD$tx <- relevel(factor(OD$tx), ref = "DMSO")
 
 bg <- OD %>% filter(tx=="media") %>% summarise(mean(na.omit(conc))) %>% pull()
@@ -112,8 +112,6 @@ levels(factor(OD$tx))
 OD$tx <- factor(OD$tx, levels = c("DMSO","0.1", "0.5", "1", "2.5", "5","10","20","50","100"))
 
 OD$Ro_conc <- as.numeric(gsub("DMSO","0", OD$tx))
-
-names(OD)[7] <- "PB_24"
 
 #write_csv(x = OD, path = "data/output/"OD".csv")
 

@@ -3,6 +3,8 @@ title: "Fig1_AldoChart"
 author: "Kathryn Walters"
 date: "7/8/2022"
 output: html_document
+editor_options: 
+  chunk_output_type: console
 ---
 
 ```{r setup, include=TRUE, echo=TRUE, warning=FALSE, message=FALSE}
@@ -187,7 +189,6 @@ OD3$batch <- rep("C",nrow(OD3))
 #combing everything into one dataframe. 
 allData <- bind_rows(OD1, OD2, OD3)
 
-
 stimData <- allData %>% filter(stim=="stim")
 dmso_A_aldo <- stimData %>% filter(batch=="A" & Ro_conc==0) %>% select(conc) %>% summarise(mean(conc)) %>% pull()
 dmso_B_aldo <- stimData %>% filter(batch=="B" & Ro_conc==0) %>% select(conc) %>% summarise(mean(conc)) %>% pull()
@@ -221,8 +222,6 @@ tmp <- mutate(tmp, pFR = ifelse(batch == "C", 100*FR_24/dmso_C_FR,
                                               ifelse(batch == "A", NA, NA))
                                        )
               )
-
-
 ```
 
 
@@ -270,14 +269,15 @@ tmp_us <- mutate(tmp_us, pFR = ifelse(batch == "C", 100*FR_24/dmso_C_FR_us,
 
 p_Aldo_per <- ggline(tmp, x = "Ro_conc", y = "pAldo", ylab = "% Aldosterone", add = "mean_sd", xlab = "[Ro] uM") + rremove("legend") + rotate_x_text(60) + geom_hline(yintercept = 100, linetype = "dotted", color = "grey")
 p_Aldo_per <- p_Aldo_per + ylim(0,120)
+ggsave(plot = p_Aldo_per, filename = "./plots/Fig1_Aldo_percent_sd.pdf", width = 3, height = 4)
 
 p_PB_per <- ggline(tmp, x = "Ro_conc", y = "pPB", ylab = "% Viability", add = "mean_sd", xlab = "[Ro] uM") + rremove("legend") + rotate_x_text(60) + geom_hline(yintercept = 100, linetype = "dotted", color = "grey")
-
 p_PB_per <- p_PB_per + ylim(0,120)
+ggsave(plot = p_PB_per, filename = "./plots/Fig1_PB_percent_sd.pdf", width = 3, height = 4)
 
 p_FR_per <- ggline(tmp, x = "Ro_conc", y = "pFR", ylab = "% DNA", add = "mean_sd", xlab = "[Ro] uM") + rremove("legend") + rotate_x_text(60) + geom_hline(yintercept = 100, linetype = "dotted", color = "grey")
-
 p_FR_per <- p_FR_per + ylim(0,120)
+ggsave(plot = p_FR_per, filename = "./plots/Fig1_FR_percent_sd.pdf", width = 3, height = 4)
 
 p_all_PR <- cowplot::plot_grid(
   p_Aldo_per + theme(legend.position="none"),
@@ -294,47 +294,19 @@ p_all_PR
 
 
 #Fit for pAldo
-fit <- drm(formula =   pAldo ~ Ro_conc , data = tmp, fct = LL.4())
+tmp2 <- tmp %>% select(Ro_conc, batch, conc)
+tmp2 <- aggregate(conc~batch+Ro_conc,tmp,mean)
+
+fit <- drm(formula =   pAldo ~ Ro_conc , data = tmp, fct=LL.4(fixed=c(NA, NA, NA, NA), names = c("Slope", "Lower Limit", "Upper Limit", "ED50")))
+
 summary(fit)
-
-# This is a description of the variables and terms defined in the 'fit' model.
-# x = the independent variable (percent aldo?)
-# y = the dependent variable 
-# The 4 estimated parameters consist of the following:
-# the minimum value that can be obtained. (this is the ABS at conc. 0)
-# a = fit$coefficients[2] 
-# d = the maximum value that can be obtained (i.e. what happens at infinite dose)
-# c = the point of inflection (i.e. the point on the S shaped curve halfway between a and d)
-# b = Hill’s slope of the curve (i.e. this is related to the steepness of the curve at point c).
-# Generate points from  model. Pick range from logconc
-x <- seq(from = 0, to = 100, length=100)
-# from OD ~ d + (a - d)/(1 + (logconc/cc)^b)
-y <- (fit$coefficients[2]+ (fit$coefficients[3]- fit$coefficients[2])/(1+(x/fit$coefficients[4])^ fit$coefficients[1])) 
-
-plot(x = tmp$Ro_conc, y = tmp$pAldo, main="log standard curve") 
-lines(x,y, lty="dotted", col="red") 
+plot(fit, type = "all")
 
 
 #Fit for pPB
-fit <- drm(formula =   pPB ~ Ro_conc , data = tmp, fct = LL.4())
+fit <- drm(formula =   pPB ~ Ro_conc , data = tmp, fct=LL.4(names = c("Slope", "Lower Limit", "Upper Limit", "ED50")))
 summary(fit)
-
-# This is a description of the variables and terms defined in the 'fit' model.
-# x = the independent variable (percent aldo?)
-# y = the dependent variable 
-# The 4 estimated parameters consist of the following:
-# the minimum value that can be obtained. (this is the ABS at conc. 0)
-# a = fit$coefficients[2] 
-# d = the maximum value that can be obtained (i.e. what happens at infinite dose)
-# c = the point of inflection (i.e. the point on the S shaped curve halfway between a and d)
-# b = Hill’s slope of the curve (i.e. this is related to the steepness of the curve at point c).
-# Generate points from  model. Pick range from logconc
-x <- seq(from = 0, to = 100, length=100)
-# from OD ~ d + (a - d)/(1 + (logconc/cc)^b)
-y <- (fit$coefficients[2]+ (fit$coefficients[3]- fit$coefficients[2])/(1+(x/fit$coefficients[4])^ fit$coefficients[1])) 
-
-plot(x = tmp$Ro_conc, y = tmp$pPB, main="log standard curve") 
-lines(x,y, lty="dotted", col="red") 
+plot(fit, type = "all")
 
 
 #Fit for pFR
@@ -355,8 +327,12 @@ x <- seq(from = 0, to = 100, length=100)
 # from OD ~ d + (a - d)/(1 + (logconc/cc)^b)
 y <- (fit$coefficients[2]+ (fit$coefficients[3]- fit$coefficients[2])/(1+(x/fit$coefficients[4])^ fit$coefficients[1])) 
 
-plot(x = tmp$Ro_conc, y = tmp$pFR, main="log standard curve") 
+
+plot(x = tmp$Ro_conc, y = tmp$pPB, main="log standard curve") 
 lines(x,y, lty="dotted", col="red") 
+
+fit$coefficients[4]*(
+ (((fit$coefficients[3]-fit$coefficients[2])/(50-fit$coefficients[2]))-1)^(1/ fit$coefficients[1]))
 ```
 
 
