@@ -201,6 +201,7 @@ p_all_PR_us <- cowplot::plot_grid(
   )
 
 p_all_PR_us
+ggsave(plot = p_all_PR_us, filename = here("plots", "Fig1Supp_Unstim_CortisolELISA.pdf"), width = 6, height = 3)
 ```
 
 

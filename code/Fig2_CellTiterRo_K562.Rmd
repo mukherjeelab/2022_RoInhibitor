@@ -3,6 +3,8 @@ title: "CellTiterRo_K562_Evan"
 author: "Neel Mukherjee & Kathryn Walters"
 date: "5/12/2022"
 output: html_document
+editor_options: 
+  chunk_output_type: console
 ---
 
 ```{r setup, include=FALSE}
@@ -113,9 +115,9 @@ all_normDox <- rbind(all_normDox, all_normNDWT)
 all_normDox <- all_normDox %>% filter(construct %in% c("WT","R100A"))
 all_normDox <- all_normDox %>% unite(construct, dox, construct)
 
-
-celltiterall <- ggline(data = all_normDox, x = "conc", y = "value", color = "construct", add = "mean_se",palette = c("red", "blue", "darkred", "darkblue"), numeric.x.axis = F) + theme_minimal() + ylab("Normalized Viability") + xlab("Ro Concentration (uM)") +  theme(legend.position="bottom")
-#ggsave(plot = celltiterall, filename = "plots/K562_viability_all.png", width = 5, height = 3, bg = "white")
+all_normDox$value <- all_normDox$value*100
+celltiterall <- ggline(data = all_normDox, x = "conc", y = "value", color = "construct", add = "mean_se",palette = c("red", "blue", "darkred", "darkblue"), numeric.x.axis = F) + ylab("% Viability") + xlab("[Ro] uM") +  theme(legend.position="bottom")
+ggsave(plot = celltiterall, filename = here("plots", "Fig2Supp_K562_all.pdf"), width = 5, height = 4, bg = "white")
 
 celltiterControl <- ggline(data = all_normDox %>% filter(construct == "nodox_WT"), x = "conc", y = "value", color = "construct", add = "mean_se", palette = c("black"), numeric.x.axis = F) + theme_minimal() + ylab("Normalized Viability") + xlab("Ro Concentration (uM)") +  theme(legend.position="none")
 #ggsave(plot = celltiterControl, filename = "plots/K562_viability_Control.png", width = 5, height = 3, bg = "white")
@@ -127,8 +129,6 @@ p_ctrl <- ggline(data = all_norm %>% filter(construct %in% c("H2O","GFP")), x = 
  add = "mean_se", palette = c("black","red"), numeric.x.axis = F) + 
   theme_minimal() + ylab("Fraction Viable Cells") + xlab("Ro Concentration (uM)")
 
-
-all_normDox$value <- all_normDox$value*100
 
 celltiterDox <- ggline(data = all_normDox %>% filter(str_detect(variable, "R100A")), x = "conc", y = "value", color = "construct", add = "mean_se", palette = c("red", "black"), numeric.x.axis = F) + ylab("%Viability") + xlab("Ro Concentration (uM)") +  theme(legend.position="bottom")
 ggsave(plot = celltiterDox, filename = here("plots", "Fig2_K562_R100Aonly_percent_sd.pdf"), width = 3.5, height = 3, bg = "white")

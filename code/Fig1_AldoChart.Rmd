@@ -359,7 +359,7 @@ p_all_PR_us <- cowplot::plot_grid(
   )
 
 p_all_PR_us
-#ggsave(plot = p_all_PR, filename = "./plots/all_percent_sd.pdf", width = 12, height = 3)
+ggsave(plot = p_all_PR_us, filename = here("plots", "Fig1Supp_Unstim_AldoELISA.pdf"), width = 6, height = 3)
 
 
 #Fit for pAldo

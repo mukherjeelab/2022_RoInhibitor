@@ -1,0 +1,152 @@
+---
+title: "Untitled"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+library(clusterProfiler)
+library(enrichplot)
+library(here)
+library(tidyverse)
+library(viridis)
+library(pheatmap)
+library(GeneOverlap)
+library(janitor)
+library(ggthemes)
+
+`%notin%` <- Negate(`%in%`)
+```
+
+```{r data, echo=FALSE}
+
+
+rbp_stat <- read_tsv("data/output/encode_k562_stat.tsv.gz")
+
+ro <- read_tsv("data/output/H295R_ro_12h_dge.tsv")
+
+
+# read_tsv("data/PISA/VolPlot_PerseusExport.txt") %>%
+#  clean_names() %>% View()
+
+
+pisa <- read_tsv("data/PISA/VolPlot_PerseusExport.txt") %>%
+  clean_names() %>%
+  filter(significant=="+") %>%
+  pull(gene_name)
+
+read_tsv("data/PISA/VolPlot_PerseusExport.txt") %>%
+  clean_names() %>% View()
+  filter(significant=="+") %>%
+  pull(gene_name) %>% 
+
+```
+
+```{r correlation}
+colnames(rbp_stat)[1] <- "ID"
+
+cor_data <- inner_join(ro %>% select(ID,stat),rbp_stat) %>%
+  as.data.frame() %>% na.omit()
+
+colnames(cor_data) <- gsub(pattern = "_log2FC", replacement = "", x = colnames(cor_data))  
+
+colnames(cor_data) <- gsub(pattern = "_stat", replacement = "", x = colnames(cor_data))  
+
+
+# 
+# plot(cor_data$stat,cor_data$MSI2)
+# 
+# plot(cor_data$stat,cor_data$SF3B1)
+
+library(rstatix)
+mydata <- cor_data %>% 
+  dplyr::select_if(is.numeric) %>%
+  as.matrix()
+
+
+mydata_pearson <- Hmisc::rcorr(mydata, type = "pearson")
+
+pearCor <- data.frame(rbp=rownames(mydata_pearson$r),
+           Pearson=mydata_pearson$r[,1],
+           pval=mydata_pearson$P[,1]) %>% 
+  filter(rbp!="stat") %>%
+  mutate(
+      pisa = case_when(
+      rbp %in% pisa ~ "interaction",
+      rbp %in% ro$symbol ~ "no interaction",
+      TRUE ~ "not detected"
+      )
+    )
+  
+
+
+tmp <- read_tsv("data/PISA/VolPlot_PerseusExport.txt") %>%
+  clean_names() %>% 
+  select(gene_name,difference)
+
+pearCor <- merge(pearCor, tmp, by.x = "rbp", by.y="gene_name", all.x = T)
+
+
+
+
+# ggplot(pearCor %>% filter(pisa!="not detected"), aes(Pearson, color = pisa)) +
+#   stat_ecdf() +
+#   scale_color_manual(values = c("red","black")) +
+#   geom_rug() +
+#   xlab("Correlation between Ro and RBP depletion") +
+#   ylab("cumulative fraction") +
+#   geom_vline(xintercept=0, linetype="dashed", color = "black") +
+#   geom_vline(xintercept=pearCor %>% filter(rbp=="MSI2") %>% pull(Pearson), linetype="dashed", color = "grey") +
+#   theme_few()
+# 
+# ggplot(pearCor %>% filter(pisa!="not detected"), aes(Pearson, color = pisa)) +
+#   geom_density() +
+#   scale_color_manual(values = c("red","black")) +
+#   geom_rug() +
+#   xlab("Correlation between Ro and RBP depletion") +
+#   ylab("cumulative fraction") +
+#   geom_vline(xintercept=0, linetype="dashed", color = "black") +
+#   geom_vline(xintercept=pearCor %>% filter(rbp=="MSI2") %>% pull(Pearson), linetype="dashed", color = "grey") +
+#   theme_few()
+
+# pearCor %>% filter(pisa=="interaction" | rbp =="MSI2" ) %>% str()
+
+pisaANDencode <- pearCor %>% filter(pisa=="interaction" | rbp =="MSI2" ) %>% 
+  mutate(
+    cat = case_when(
+      pval < .05 & Pearson > 0 ~ "similar",
+      pval < .05 & Pearson < 0 ~ "opposite",
+      rbp=="MSI2" ~ "MSI2",
+      TRUE ~ "no relationship"
+    ) %>% as.factor()
+  )
+
+
+
+library(ggpubr)
+
+pisaANDencode$cat <- factor(pisaANDencode$cat, levels = c("similar", "no relationship", "MSI2", "opposite"))
+
+mypal <- c("#CC79A7",
+"#000000",
+"#F0E442",
+"#56B4E9")
+
+# palette.colors(NULL, "Okabe-Ito")
+#  
+# p = palette.colors(NULL, "Okabe-Ito")
+# pie(rep(1, times=9), col=p, labels=p)
+# 
+
+
+ggbarplot(pisaANDencode, x = "rbp", y = "Pearson", sort.val = "desc", sort.by.groups = F, fill = "cat",
+  label = F, label.pos = "out", palette = mypal) + rotate_x_text(60) + ylim(-.35,.35)
+
+
+p_pisa_knockdown <- ggdotchart(pisaANDencode, x = "rbp", y = "Pearson", sorting = "descending", add = "segments", color = "cat", palette = mypal, dot.size = 3) +  ylim(-.37,.37) + geom_hline(yintercept = 0, linetype = 2, color = "lightgray")
+
+
+ggsave("plots/pisa_knockdown.pdf", plot = p_pisa_knockdown, width = 8, height = 5)
+
+```
+
+

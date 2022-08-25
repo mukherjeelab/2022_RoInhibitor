@@ -3,6 +3,8 @@ title: "Fig1_RNAseq"
 author: "Neel Mukherjee, Kathryn Walters"
 date: "7/11/2022"
 output: html_document
+editor_options: 
+  chunk_output_type: console
 ---
 
 ```{r setup}
@@ -23,6 +25,12 @@ library(GeneOverlap)
 library(tximport)
 library(DESeq2)
 library(cowplot)
+library(dplyr)
+library(conflicted)
+
+conflict_prefer("select", "dplyr")
+conflict_prefer("filter", "dplyr")
+conflict_prefer("colMaxs", "matrixStats")
 # you will need to install all these packages before you can run this.
 
 # list of functions 
@@ -268,7 +276,7 @@ p_pathway <- plot_grid(p_SCD  + theme(legend.position="none"),
                        p_NR5A1  + theme(legend.position="none"),
                                           nrow = 3)
 
-ggsave(plot = p_pathway, device = "pdf", width = 3, height = 5, filename = here("plots","Fig1_RNAseq_FC.pdf"))
+ggsave(plot = p_pathway, device = "pdf", width = 5, height = 5, filename = here("plots","Fig1_RNAseq_FC.pdf"))
 
 ```
 
