@@ -69,7 +69,7 @@ MFlolli <- ggplot(MF[7:21,], aes(x=Description, y=-log10(p.adjust))) +
 
 ggsave(plot = MFlolli, filename = here("plots", "Fig3_MF_goEnrich.pdf"), width = 7, height = 3)
 
-write_csv(x = MF, col_names = TRUE, here("output", "SupTable5_GOanalysis_MFall.csv"))
+write_csv(x = MF, col_names = TRUE, here("output", "SupTable3_GOanalysis_MFall.csv"))
 
 CC <- as_tibble(enrPISA) %>%
   filter(ONTOLOGY == 'CC')

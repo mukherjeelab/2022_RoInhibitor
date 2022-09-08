@@ -358,6 +358,6 @@ clustmsigdb <- clustmsigdb[order(clustmsigdb[,1]),]
 
 pheatmap(mat = clustmsigdb, scale = "none", cluster_cols = F, border_color = "black",  clustering_distance_rows = "euclidean", clustering_method = "complete", color = viridis(10, option = "E", direction = 1), filename = here("plots","Fig1_HeatmapBP.pdf"), width = 40, height = 10, fontsize = 24)
 
-write_csv(x = as.data.frame(clustmsigdb) %>% rownames_to_column(), col_names = TRUE, here("output", "SupTable4_HeatmapGOMcat_all.csv"))
+write_csv(x = as.data.frame(clustmsigdb) %>% rownames_to_column(), col_names = TRUE, here("output", "SupTable2_HeatmapGOMcat_all.csv"))
 
 ```
