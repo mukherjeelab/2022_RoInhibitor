@@ -25,17 +25,21 @@ library(ggpubr)
 library(tximport)
 ```
 
+
 ## 1D PISA with Ro
 
+
 ```{r import, message=FALSE, warning=FALSE}
-vol_data <- read_tsv("data/VolPlot_PerseusExport.txt") %>%
+vol_data <- read_tsv("data/PISA/VolPlot_PerseusExport.txt") %>%
   clean_names()
 
 ```
 
+
 ## MSI2 detection
 
-```{r msi2 detection}
+
+```{r msi2 detection, warning=FALSE, message=FALSE}
 MSI2_pep <- vol_data %>% filter(gene_name=="MSI2") %>% pull(num_unique_peptides)
 
 ggplot(vol_data, aes(num_unique_peptides)) +
@@ -45,13 +49,13 @@ ggplot(vol_data, aes(num_unique_peptides)) +
   xlab("number of unique peptides") +
   theme_classic()
 
-
 ```
+
 
 ## Volcano plot
 
 
-```{r volcano, echo=FALSE}
+```{r volcano, warning=FALSE, message=FALSE}
 vol_data$mygenes <- if_else(condition = vol_data$gene_name=="MSI2",true = "MSI2", false = "")
 
 volcanoPlot <- ggplot(vol_data, aes(difference, log_p_value, label = mygenes)) +
@@ -62,7 +66,7 @@ volcanoPlot <- ggplot(vol_data, aes(difference, log_p_value, label = mygenes)) +
   ylab("-log10 p-value") +
   xlab("log2 fold change") +
   theme_classic() 
-
+volcanoPlot
 table(vol_data$significant)
 
 ggsave(plot = volcanoPlot, filename = here("plots", "Fig3_PISAvolcanoPlot_wMSI2point.pdf"), device = "pdf", units = "in", width = 5, height = 4, dpi = 320)

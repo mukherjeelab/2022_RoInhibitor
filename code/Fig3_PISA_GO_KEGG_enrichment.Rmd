@@ -24,7 +24,7 @@ library(here)
 ## reading PISA data and filtering significant ones
 
 ```{r reading_data, warning=FALSE,message=FALSE}
-goi <- fread(here('data', 'VolPlot_PerseusExport.txt')) %>%
+goi <- fread(here('data', 'PISA', 'VolPlot_PerseusExport.txt')) %>%
   filter(Significant == '+') %>%
   dplyr::select(c('Accession')) %>%
   deframe()
@@ -39,7 +39,7 @@ enrPISA <- enrichGO(gene = goi,
                     ont = 'ALL',
                     pvalueCutoff = 0.05,
                     pAdjustMethod = 'fdr',
-                    minGSSize = 3,
+                    minGSSize = 5,
                     maxGSSize = 800,
                     readable = T)
 
@@ -48,14 +48,14 @@ BP <- as_tibble(enrPISA) %>%
 #fwrite(BP, here('data','PISA_GO_BP.tsv'), sep = '\t')
 
 MF <- as_tibble(enrPISA) %>%
-  filter(ONTOLOGY == 'MF')
+  filter(ONTOLOGY == 'MF' & Count >= 5)
 #fwrite(MF, here('data','PISA_GO_MF.tsv'), sep = '\t')
 
 MF <- MF %>%
   arrange(desc(p.adjust)) %>%               # sort your dataframe
   mutate(Description = factor(Description, unique(Description))) # reset your factor-column based on that order
 
-MFlolli <- ggplot(MF, aes(x=Description, y=-log10(p.adjust))) +
+MFlolli <- ggplot(MF[7:21,], aes(x=Description, y=-log10(p.adjust))) +
   geom_segment( aes(x=Description, xend=Description, yend=p.adjust), color="black") +
   geom_point( color="red", size=4) +
   theme_light() + coord_flip() +
@@ -68,6 +68,8 @@ MFlolli <- ggplot(MF, aes(x=Description, y=-log10(p.adjust))) +
   ylab("Adjusted -log10(p-Value)")
 
 ggsave(plot = MFlolli, filename = here("plots", "Fig3_MF_goEnrich.pdf"), width = 7, height = 3)
+
+write_csv(x = MF, col_names = TRUE, here("output", "SupTable5_GOanalysis_MFall.csv"))
 
 CC <- as_tibble(enrPISA) %>%
   filter(ONTOLOGY == 'CC')
@@ -98,8 +100,8 @@ kegg_res <- kegg_res %>%
   arrange(desc(p.adjust)) %>%               # sort your dataframe
   mutate(Description = factor(Description, unique(Description))) # reset your factor-column based on that order
 
-ggplot(kegg_res, aes(x=Description, y=p.adjust)) +
-  geom_segment( aes(x=Description, xend=Description, y=0, yend=p.adjust), color="black") +
+KGlolli <- ggplot(kegg_res, aes(x=Description, y=-log10(p.adjust))) +
+  geom_segment( aes(x=Description, xend=Description, yend=p.adjust), color="black") +
   geom_point( color="red", size=4) +
   theme_light() + coord_flip() +
   theme(
@@ -108,6 +110,9 @@ ggplot(kegg_res, aes(x=Description, y=p.adjust)) +
     axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)
   ) +
   xlab("") +
-  ylab("Adjusted p-Value")
+  ylab("Adjusted -log10(p-Value)")
+
+ggsave(plot = KGlolli, filename = here("plots", "Fig3Supp_KG_goEnrich.pdf"), width = 7, height = 4)
+
 #fwrite(kegg_res, here('data','PISA_KEGG_enrich.tsv'), sep = '\t')
 ```

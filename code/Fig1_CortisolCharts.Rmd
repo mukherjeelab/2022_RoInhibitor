@@ -3,6 +3,8 @@ title: "Fig1_CortisolChart"
 author: "Kathryn Walters"
 date: "7/11/2022"
 output: html_document
+editor_options: 
+  chunk_output_type: console
 ---
 
 
@@ -11,7 +13,6 @@ output: html_document
 library(drc) # modeling tools
 library(tidyverse) # your go to set of functions for messing w/data
 library(RColorBrewer) # to make color schemes
-#library(ggpubr) # publication quality ggplots ha ha ha
 library(ggthemes) # additional themes for ggplot-ing
 library(gridExtra) # allows arranging of plots (rows/columns...)
 library(splitstackshape)
@@ -19,6 +20,10 @@ library(ggpubr)
 library(here)
 
 ```
+
+
+## ELISA Function
+
 
 ```{r function, message=FALSE, warning=FALSE, include=TRUE}
 
@@ -107,6 +112,7 @@ return(OD)
 ```
 
 
+## Read Data
 
 
 ```{r read data, include=TRUE, warning=FALSE, message=FALSE}
@@ -116,9 +122,10 @@ OD <- read_csv(here("data", "ELISA", "KAB039_Cortisol_ELISAall2.csv"))
 colnames(OD) <- c("Sample","Well","OD_450","OD_540","OD_570","viability_1hr", "viability_2hr")
 OD <- OD %>% select(-viability_2hr)
 
-
-
 ```
+
+
+## Calculating Cortisol Amounts
 
 
 ```{r ELISA modeling, include=TRUE, warning=FALSE, message=FALSE}
@@ -126,15 +133,21 @@ OD <- ELISAmodelfit(OD)
 ```
 
 
-```{r}
+## Normalizing to DMSO Control
+
+
+```{r normalizing to DMSO, include=TRUE, warning=FALSE, message=FALSE}
+#correcting for dilutions done in the assay - only going to use dilution 5 as this is within the standard range for the assay. 
 OD$conc2 <- OD$conc * as.numeric(OD$dil)
 OD1 <- OD %>% filter(OD$dil != 5)
 OD5 <- OD %>% filter(OD$dil != 1)
 
+#only using 1:5 dilution
 OD5$Ro_conc <- OD5$tx
 OD5$Ro_conc <- gsub(x = OD5$Ro_conc, pattern = "uM", replacement = "")
 OD5$Ro_conc <- as.numeric(gsub("DMSO","0", OD5$Ro_conc))
 
+#normalizing to DMSO for cortisol amounts
 DMSOmeanstim <- OD5 %>% filter(tx == "DMSO") %>% filter(stim == "stim") %>% select(conc2) %>% summarise(mean(conc2)) %>% pull()
 
 DMSOmeanUS <- OD5 %>% filter(tx == "DMSO") %>% filter(stim == "us") %>% select(conc2) %>% summarise(mean(conc2)) %>% pull()
@@ -149,6 +162,7 @@ OD5us$percent <- OD5us$conc2/DMSOmeanUS*100
 OD5stim$percent <- as.numeric(OD5stim$percent)
 OD5us$percent <- as.numeric(OD5us$percent)
 
+#normalizing to DMSO for presto blue assay
 dmso_PB <- OD5stim %>% filter(tx=="DMSO") %>% select(viability_1hr) %>% summarise(mean(viability_1hr)) %>% pull()
 dmso_PB_us <- OD5us %>% filter(tx=="DMSO") %>% select(viability_1hr) %>% summarise(mean(viability_1hr)) %>% pull()
 
@@ -158,15 +172,21 @@ OD5stim$pPB <- as.numeric(OD5stim$pPB)
 OD5us$pPB <- 100*OD5us$viability_1hr/dmso_PB_us
 OD5us$pPB <- as.numeric(OD5us$pPB)
 
+```
+
+
+## Plotting Normalized Cortisol and Viability for both Stimulated/Unstimuated
+
+
+```{r plots, include=TRUE, warning=FALSE, message=FALSE}
 
 p_cort_per_stim <- ggline(OD5stim, x = "Ro_conc", y = "percent", ylab = "% Cortisol", add = "mean_sd", xlab = "[Ro] uM") + rremove("legend") + rotate_x_text(60) + geom_hline(yintercept = 100, linetype = "dotted", color = "black")
-
 p_cort_per_stim <- p_cort_per_stim + ylim(0,120)
 p_cort_per_stim
 ggsave(plot = p_cort_per_stim, filename = "./plots/Fig1_cort_percent_sd.pdf", width = 3, height = 4)
 
-p_cort_perPB_stim <- ggline(OD5stim, x = "Ro_conc", y = "pPB", ylab = "% Viability", add = "mean_sd", xlab = "[Ro] uM") + rremove("legend") + rotate_x_text(60) + geom_hline(yintercept = 100, linetype = "dotted", color = "black")
 
+p_cort_perPB_stim <- ggline(OD5stim, x = "Ro_conc", y = "pPB", ylab = "% Viability", add = "mean_sd", xlab = "[Ro] uM") + rremove("legend") + rotate_x_text(60) + geom_hline(yintercept = 100, linetype = "dotted", color = "black")
 p_cort_perPB_stim <- p_cort_perPB_stim + ylim(0,125)
 p_cort_perPB_stim
 
@@ -179,18 +199,15 @@ p_all_PR <- cowplot::plot_grid(
   nrow = 1
   )
 
-p_all_PR
-
 p_cort_per_us <- ggline(OD5us, x = "Ro_conc", y = "percent", ylab = "% Cortisol", add = "mean_sd", xlab = "[Ro] uM") + rremove("legend") + rotate_x_text(60) + geom_hline(yintercept = 100, linetype = "dotted", color = "black")
-
 p_cort_per_us <- p_cort_per_us + ylim(0,125)
 p_cort_per_us
 
 
 p_cort_pPB_us <- ggline(OD5us, x = "Ro_conc", y = "pPB", ylab = "% Viability", add = "mean_sd", xlab = "[Ro] uM") + rremove("legend") + rotate_x_text(60) + geom_hline(yintercept = 100, linetype = "dotted", color = "black")
-
 p_cort_pPB_us <- p_cort_pPB_us + ylim(0,125)
 p_cort_pPB_us
+
 
 p_all_PR_us <- cowplot::plot_grid(
   p_cort_per_us + theme(legend.position="none"),
@@ -199,89 +216,23 @@ p_all_PR_us <- cowplot::plot_grid(
   hjust = -1,
   nrow = 1
   )
-
-p_all_PR_us
 ggsave(plot = p_all_PR_us, filename = here("plots", "Fig1Supp_Unstim_CortisolELISA.pdf"), width = 6, height = 3)
 ```
 
 
+## Calculating IC50 values for Stimulated cells
+
+
 ```{r IC50 values, warning=FALSE, message=FALSE}
 #Fit for percent Cortisol
-fit <- drm(formula =   percent ~ Ro_conc , data = OD5stim, fct=LL.4(names = c("Slope", "Lower Limit", "Upper Limit", "ED50")))
+fit <- drm(formula =   percent ~ Ro_conc , data = OD5stim, fct=LL.4(names = c("Slope", "Lower Limit", "Upper Limit", "IC50")))
 summary(fit)
 plot(fit, type = "all")
-# This is a description of the variables and terms defined in the 'fit' model.
-# x = the independent variable (percent aldo?)
-# y = the dependent variable 
-# The 4 estimated parameters consist of the following:
-# the minimum value that can be obtained. (this is the ABS at conc. 0)
-# a = fit$coefficients[2] 
-# d = the maximum value that can be obtained (i.e. what happens at infinite dose)
-# c = the point of inflection (i.e. the point on the S shaped curve halfway between a and d)
-# b = Hill’s slope of the curve (i.e. this is related to the steepness of the curve at point c).
-# Generate points from  model. Pick range from logconc
-x <- seq(from = 0, to = 10, length=100)
-z <- 50
-# from OD ~ d + (a - d)/(1 + (logconc/cc)^b)
-y <- (fit$coefficients[2]+ (fit$coefficients[3]- fit$coefficients[2])/(1+(x/fit$coefficients[4])^ fit$coefficients[1])) 
-zz<- 
-(fit$coefficients[2]+ (fit$coefficients[3]- fit$coefficients[2])/(1+(z/fit$coefficients[4])^ fit$coefficients[1]))
-
-(fit$coefficients[3]+ (fit$coefficients[2]- fit$coefficients[3])/(1+(z/fit$coefficients[4])^ fit$coefficients[1]))
-
-plot(x = OD5stim$Ro_conc, y = OD5stim$percent, main="log standard curve") 
-lines(x,y, lty="dotted", col="red") 
-
-
 
 
 #Fit for pPB
-fit <- drm(formula =   pPB ~ Ro_conc , data = OD5stim, fct = LL.4())
-summary(fit)
-
-# This is a description of the variables and terms defined in the 'fit' model.
-# x = the independent variable (percent aldo?)
-# y = the dependent variable 
-# The 4 estimated parameters consist of the following:
-# the minimum value that can be obtained. (this is the ABS at conc. 0)
-# a = fit$coefficients[2] 
-# d = the maximum value that can be obtained (i.e. what happens at infinite dose)
-# c = the point of inflection (i.e. the point on the S shaped curve halfway between a and d)
-# b = Hill’s slope of the curve (i.e. this is related to the steepness of the curve at point c).
-# Generate points from  model. Pick range from logconc
-x <- seq(from = 0, to = 10, length=100)
-# from OD ~ d + (a - d)/(1 + (logconc/cc)^b)
-y <- (fit$coefficients[2]+ (fit$coefficients[3]- fit$coefficients[2])/(1+(x/fit$coefficients[4])^ fit$coefficients[1])) 
-
-y <- (fit$coefficients[3]+ (fit$coefficients[2]- fit$coefficients[3])/(1+(z/fit$coefficients[4])^ fit$coefficients[1])) 
-
-plot(x = OD5stim$Ro_conc, y = OD5stim$pPB, main="log standard curve") 
-lines(x,y, lty="dotted", col="red") 
-```
-
-
-```{r playing with modeling, message=FALSE, warning=FALSE, echo=FALSE}
-drm(percent_response~conc, data=toxdata, 
-                  fct=LL.4(fixed=c(NA, 0, 100, NA),
-                           names = c("Slope", "Lower Limit", "Upper Limit", "ED50")))
-
-fit <- drm(formula =   pPB ~ Ro_conc , data = OD5stim,  
-                  fct=LL.4(fixed=c(NA,0,100,NA),names = c("Slope", "Lower Limit", "Upper Limit","ED50")))
-
+fit <- drm(formula =   pPB ~ Ro_conc , data = OD5stim, fct=LL.4(names = c("Slope", "Lower Limit", "Upper Limit", "IC50")))
 summary(fit)
 plot(fit, type = "all")
 
-mselect(fit, fctList = list(W1.3(fixed=c(NA, 100, NA)),W1.4(), W2.3(fixed=c(NA, 100, NA)), W2.4(),  LL.4()),linreg=TRUE) 
-
-
-
-fit$coefficients[4]*(
- (((fit$coefficients[3]-fit$coefficients[2])/(50-fit$coefficients[2]))-1)^(1/ fit$coefficients[1]))
-
-fit$coefficients[2]*(
- (((100-0)/(50-0))-1)^(1/ fit$coefficients[1]))
-
 ```
-
-
-

@@ -1,8 +1,10 @@
 ---
-title: "Fig1_A93inhibitor"
+title: "Fig2_RoResELISA_aldo"
 author: "Kathryn Walters"
 date: "7/12/2022"
 output: html_document
+editor_options: 
+  chunk_output_type: console
 ---
 
 
@@ -12,13 +14,14 @@ library(here)
 library(drc) # modeling tools
 library(tidyverse) # your go to set of functions for messing w/data
 library(RColorBrewer) # to make color schemes
-#library(ggpubr) # publication quality ggplots ha ha ha
 library(ggthemes) # additional themes for ggplot-ing
 library(gridExtra) # allows arranging of plots (rows/columns...)
 library(splitstackshape)
 library(ggpubr)
 ```
 
+
+## ELISA Function 
 
 
 ```{r function, message=FALSE, warning=FALSE, include=TRUE}
@@ -113,12 +116,13 @@ OD$tx <- factor(OD$tx, levels = c("DMSO","0.1", "0.5", "1", "2.5", "5","10","20"
 
 OD$Ro_conc <- as.numeric(gsub("DMSO","0", OD$tx))
 
-#write_csv(x = OD, path = "data/output/"OD".csv")
-
 return(OD)
 }
 
 ```
+
+
+## Reading in data
 
 
 ```{r read data, include=TRUE, warning=FALSE, message=FALSE}
@@ -134,7 +138,11 @@ colnames(OD2) <- c("Sample","Well","OD_450","OD_540","OD_570", "Viability_1hr")
 ```
 
 
+## ELISA Modeling
+
+
 ```{r ELISA modeling, include=TRUE, warning=FALSE, message=FALSE}
+#Use ELISAmodelfit Function to determine the amount of aldosterone produced in each experiment.
 OD1 <- ELISAmodelfit(OD1)
 OD1$batch <- rep("A",nrow(OD1))
 
@@ -142,9 +150,14 @@ OD2 <- ELISAmodelfit(OD2)
 OD2$batch <- rep("B",nrow(OD2))
 ```
 
-```{r}
+
+## Dox treated, Ro Treated Cells Normalization to DMSO Control
+
+
+```{r Dox data, include=TRUE, warning=FALSE, message=FALSE}
 OD <- bind_rows(OD1, OD2) #combining everything into one dataframe. 
 
+#calculating percent aldosterone in the dox treated cells compared to DMSO control.
 RoResData <- OD %>% filter(Dox=="Dox")
 dmso_A_aldo <- RoResData %>% filter(batch=="A" & Ro_conc==0) %>% select(conc) %>% summarise(mean(conc)) %>% pull()
 dmso_B_aldo <- RoResData %>% filter(batch=="B" & Ro_conc==0) %>% select(conc) %>% summarise(mean(conc)) %>% pull()
@@ -153,7 +166,7 @@ tmp <- mutate(RoResData, pAldo = ifelse(batch == "A", 100*conc/dmso_A_aldo,
                                        ifelse(batch == "B", 100*conc/dmso_B_aldo, "")))
 tmp$pAldo <- as.numeric(tmp$pAldo)
 
-
+#calculating percent viability in the dox treated cells compared to DMSO control.
 dmso_A_PB <- RoResData %>% filter(batch=="A" & Ro_conc==0) %>% select(Viability_1hr) %>% summarise(mean(Viability_1hr)) %>% pull()
 dmso_B_PB <- RoResData %>% filter(batch=="B" & Ro_conc==0) %>% select(Viability_1hr) %>% summarise(mean(Viability_1hr)) %>% pull()
 
@@ -164,8 +177,11 @@ tmp$pPB <- as.numeric(tmp$pPB)
 ```
 
 
-```{r NoDox data, include=TRUE, warning=FALSE, message=FALSE}
+## NoDox, Ro Treated Cells Normalization to DMSO Control
 
+
+```{r NoDox data, include=TRUE, warning=FALSE, message=FALSE}
+#calculating percent aldosterone in the minus dox treated cells compared to DMSO control.
 NoDoxData <- OD %>% filter(Dox=="ND")
 dmso_A_aldo_us <- NoDoxData %>% filter(batch=="A" & Ro_conc==0) %>% select(conc) %>% summarise(mean(conc)) %>% pull()
 dmso_B_aldo_us <- NoDoxData %>% filter(batch=="B" & Ro_conc==0) %>% select(conc) %>% summarise(mean(conc)) %>% pull()
@@ -174,7 +190,7 @@ tmp_us <- mutate(NoDoxData, pAldo = ifelse(batch == "A", 100*conc/dmso_A_aldo_us
                                        ifelse(batch == "B", 100*conc/dmso_B_aldo_us,"")))
 tmp_us$pAldo <- as.numeric(tmp_us$pAldo)
 
-
+#calculating percent viability in the  minus dox treated cells compared to DMSO control.
 dmso_A_PB_us <- NoDoxData %>% filter(batch=="A" & Ro_conc==0) %>% select(Viability_1hr) %>% summarise(mean(Viability_1hr)) %>% pull()
 dmso_B_PB_us <- NoDoxData %>% filter(batch=="B" & Ro_conc==0) %>% select(Viability_1hr) %>% summarise(mean(Viability_1hr)) %>% pull()
 
@@ -185,28 +201,20 @@ tmp_us$pPB <- as.numeric(tmp_us$pPB)
 ```
 
 
-```{r}
+## Plotting Data
+
+
+```{r plots, include=TRUE, warning=FALSE, message=FALSE}
 allData <- bind_rows(tmp, tmp_us)
 p_Aldo_per <- ggline(allData, x = "Ro_conc", y = "pAldo", color = "Dox",palette = c("black","red"), ylab = "% Aldosterone", add = "mean_sd", xlab = "[Ro] uM") + rotate_x_text(60) + geom_hline(yintercept = 100, linetype = "dotted", color = "grey")
 p_Aldo_per <- p_Aldo_per + ylim(-1,130)
+p_Aldo_per
+ggsave(plot = p_Aldo_per, filename = here("plots", "Fig2_RoRes_Aldopercent_sd.pdf"), width = 3, height = 4)
 
 p_PB_per <- ggline(allData, x = "Ro_conc", y = "pPB", color = "Dox",palette = c("black","red"),ylab = "% Viability", add = "mean_sd", xlab = "[Ro] uM") + rotate_x_text(60) + geom_hline(yintercept = 100, linetype = "dotted", color = "grey")
-
 p_PB_per <- p_PB_per + ylim(-1,130)
-
-
-p_all_PR <- cowplot::plot_grid(
-  p_Aldo_per + theme(legend.position="bottom"),
-  p_PB_per + theme(legend.position="bottom"),
-  align = 'vh',
-  #labels = c("A", "B","C"),
-  hjust = -1,
-  nrow = 1
-  )
-
-p_all_PR
-ggsave(plot = p_all_PR, filename = here("plots", "Fig2_RoRes_percent_sd.pdf"), width = 6, height = 3)
-
+p_PB_per
+ggsave(plot = p_Aldo_per, filename = "./plots/Fig2Supp_RoRes_Viabilitypercent_sd.pdf", width = 3, height = 4)
 
 ```
 

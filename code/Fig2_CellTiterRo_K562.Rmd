@@ -7,7 +7,8 @@ editor_options:
   chunk_output_type: console
 ---
 
-```{r setup, include=FALSE}
+```{r setup, include=FALSE, warning=FALSE, message=FALSE}
+library(drc) # modeling tools
 library(tidyverse)
 library(readxl)
 library(ggpubr)
@@ -17,26 +18,32 @@ library(stringr)
 ```
 
 
-## Compare Ro sensitivity patterns
+## Compare Ro sensitivity patterns between construct and dox treatment
+
+
 ```{r no dox, warning=FALSE, message=FALSE}
-rd4 <- read_xls(here("data","ECH003_4_05042022.xls"))
+rd4 <- read_xls(here("data","K562Viability", "ECH003_4_05042022.xls"))
 rd4$Ro <- as.character(rd4$Ro)
 rd4_long <- reshape2::melt(rd4, value.name = "cytotox", variable.name = "sample") %>%
   separate(col = sample, into = c("construct", "dox", "rep"), remove = F) 
 rd4_long$Ro <-  as.numeric(rd4_long$Ro)
 rd4_long$dox <- relevel(x = as.factor(rd4_long$dox), ref = "nodox")
 rd4_long$construct <- factor(rd4_long$construct, levels = c("H2O","WT","R100A","GFP"))
+
+#looking at the constructs by Dox treatment. 
 ggline(data = rd4_long, x = "Ro", y = "cytotox", color = "construct", facet.by = "dox", numeric.x.axis = F,
  add = "mean_se")
-# ggline(data = rd4_long %>% filter(sample!="R100A_nodox_2"), x = "Ro", y = "cytotox", color = "construct", facet.by = "dox", numeric.x.axis = F,
-#  add = "mean_se")
+
+#looking at the dox treatment within each construct. 
 ggline(data = rd4_long, x = "Ro", y = "cytotox", color = "dox", facet.by = "construct", numeric.x.axis = F,
  add = "mean_se", palette = c("black","red"), scales="free")
 ```
 
 
+## Normalizing no dox treatment
 
-```{r no dox norm}
+
+```{r no dox norm, warning=FALSE, message=FALSE}
 nodox <- rd4[,c(1,grep(colnames(rd4), pattern = "nodox"))]
 nodox <- nodox %>% select(-R100A_nodox_2)
 avg_noro_nodox <- rd4_long %>%
@@ -46,8 +53,7 @@ avg_noro_nodox <- rd4_long %>%
   group_by(construct) %>%
   summarise(avg=mean(cytotox)) %>%
   as.matrix()
-avg_noro_nodox
-colnames(nodox)
+
 nodox_norm <- data.frame(
   conc=nodox$Ro,
   nodox[,2:3]/as.numeric(avg_noro_nodox[3,2]),
@@ -66,7 +72,10 @@ ggline(data = nodox_norm_long, x = "conc", y = "value", color = "construct",
 ```
 
 
-```{r dox norm}
+## Normalizing the Dox treatment
+
+
+```{r dox norm, warning=FALSE, message=FALSE}
 dox <- rd4[,grep(colnames(rd4), pattern = "nodox", invert = T)]
   
 avg_noro_dox <- rd4_long %>%
@@ -75,8 +84,7 @@ avg_noro_dox <- rd4_long %>%
   group_by(construct) %>%
   summarise(avg=mean(cytotox)) %>%
   as.matrix()
-avg_noro_dox
-colnames(dox)
+
 dox_norm <- data.frame(
   conc=dox$Ro,
   dox[,2:4]/as.numeric(avg_noro_dox[3,2]),
@@ -101,13 +109,6 @@ data.frame(dox_norm_long,
 all_norm$Ro <-  as.numeric(all_norm$conc)
 all_norm$dox <- relevel(x = as.factor(all_norm$dox), ref = "nodox")
 all_norm$construct <- factor(all_norm$construct, levels = c("H2O","WT","R100A","GFP"))
-ggline(data = all_norm, x = "conc", y = "value", color = "dox", facet.by = "construct",
- add = "mean_se", palette = c("black","red"))
-ggline(data = all_norm, x = "conc", y = "value", color = "dox", facet.by = "construct",
- add = "mean_se", palette = c("black","red"), numeric.x.axis = F) + scale_y_continuous(log2_trans())
-
-p_exp <- ggline(data = all_norm %>% filter(construct %in% c("WT","R100A") & dox == "dox"), x = "conc", y = "value", color = "construct", add = "mean_se", palette = c("black","red"), numeric.x.axis = F) + 
-  theme_minimal() + ylab("Normalized Viability") + xlab("Ro Concentration (uM)")
 
 all_normDox <- all_norm %>% filter(dox == "dox")
 all_normNDWT <- all_norm %>% filter(dox == "nodox")
@@ -116,22 +117,15 @@ all_normDox <- all_normDox %>% filter(construct %in% c("WT","R100A"))
 all_normDox <- all_normDox %>% unite(construct, dox, construct)
 
 all_normDox$value <- all_normDox$value*100
+
+
 celltiterall <- ggline(data = all_normDox, x = "conc", y = "value", color = "construct", add = "mean_se",palette = c("red", "blue", "darkred", "darkblue"), numeric.x.axis = F) + ylab("% Viability") + xlab("[Ro] uM") +  theme(legend.position="bottom")
 ggsave(plot = celltiterall, filename = here("plots", "Fig2Supp_K562_all.pdf"), width = 5, height = 4, bg = "white")
-
-celltiterControl <- ggline(data = all_normDox %>% filter(construct == "nodox_WT"), x = "conc", y = "value", color = "construct", add = "mean_se", palette = c("black"), numeric.x.axis = F) + theme_minimal() + ylab("Normalized Viability") + xlab("Ro Concentration (uM)") +  theme(legend.position="none")
-#ggsave(plot = celltiterControl, filename = "plots/K562_viability_Control.png", width = 5, height = 3, bg = "white")
-
-celltiterWT <- ggline(data = all_normDox %>% filter(construct == "nodox_WT" | construct == "dox_WT"), x = "conc", y = "value", color = "construct", add = "mean_se", palette = c("grey", "black"), numeric.x.axis = F) + theme_minimal() + ylab("Normalized Viability") + xlab("Ro Concentration (uM)") +  theme(legend.position="none")
-#ggsave(plot = celltiterWT, filename = "plots/K562_viability_WT.png", width = 5, height = 3, bg = "white")
-
-p_ctrl <- ggline(data = all_norm %>% filter(construct %in% c("H2O","GFP")), x = "conc", y = "value", color = "dox", facet.by = "construct",
- add = "mean_se", palette = c("black","red"), numeric.x.axis = F) + 
-  theme_minimal() + ylab("Fraction Viable Cells") + xlab("Ro Concentration (uM)")
-
+celltiterall
 
 celltiterDox <- ggline(data = all_normDox %>% filter(str_detect(variable, "R100A")), x = "conc", y = "value", color = "construct", add = "mean_se", palette = c("red", "black"), numeric.x.axis = F) + ylab("%Viability") + xlab("Ro Concentration (uM)") +  theme(legend.position="bottom")
 ggsave(plot = celltiterDox, filename = here("plots", "Fig2_K562_R100Aonly_percent_sd.pdf"), width = 3.5, height = 3, bg = "white")
-
-# ggsave(plot = p_ctrl, filename = "plots/K562_viability_Ro_ctrl.png", width = 6, height = 3, bg = "white")
+celltiterDox
 ```
+
+

@@ -7,7 +7,7 @@ editor_options:
   chunk_output_type: console
 ---
 
-```{r setup}
+```{r setup, include=FALSE, message=FALSE, warning=FALSE}
 # Import R packages that we will need in the analysis
 knitr::opts_chunk$set(echo = TRUE)
 library(here)
@@ -27,18 +27,22 @@ library(DESeq2)
 library(cowplot)
 library(dplyr)
 library(conflicted)
+library(xlsx)
 
 conflict_prefer("select", "dplyr")
 conflict_prefer("filter", "dplyr")
 conflict_prefer("colMaxs", "matrixStats")
 # you will need to install all these packages before you can run this.
+```
 
-# list of functions 
 
-## function for plotting changes
+## List of Functions
+
+
+```{r functions, message=FALSE, warning=FALSE, include=TRUE}
+
+#function for plotting changes
 plotgeneFC <- function(deseq_object, goi) {
-  
-
 
   mygene <- annotation %>% filter(symbol==goi)
   d <- plotCounts(deseq_object, gene = mygene$gene, intgroup = c("Treatment","Time"), returnData = TRUE) 
@@ -56,13 +60,10 @@ plotgeneFC <- function(deseq_object, goi) {
     xlab("Hours after AngII stimulation") +
     theme_few() 
 
-
 }
 
 plotgeneCounts <- function(deseq_object, goi) {
   
-
-
   mygene <- annotation %>% filter(symbol==goi)
   d <- plotCounts(deseq_object, gene = mygene$gene, intgroup = c("Treatment","Time"), returnData = TRUE) 
   d$Time <- as.numeric(as.character(d$Time))
@@ -75,26 +76,25 @@ plotgeneCounts <- function(deseq_object, goi) {
     xlab("Hours after AngII stimulation") +
     theme_few() 
 
-
 }
-
-
 
 ```
 
 
+## Making Txi File
 
-```{r get expression}
+
+```{r get data, message=FALSE, warning=FALSE, include=TRUE}
+#loading Gencode gene information
 geneInfo <- read_csv(here("data","accessories","gencode.v26.primary.info.csv.zip"), col_names = F) 
-
 colnames(geneInfo) <- c("gene","transcript","biotype","symbol")
 
-
+#getting rid of precursor RNAs
 geneInfo <- geneInfo[grep('^pre_', geneInfo$transcript , invert = T),]
 
 tx2gene <- geneInfo %>% select(transcript, gene)
 
-
+#loading and cleaning metadata
 msi_metadata <- readxl::read_xlsx(here("data","accessories","NMLabLibrarySummary.xlsx"), sheet = 1) %>% filter(Project == "MSI2") %>%
   select(SampleID, Treatment1, Time_hr, Treatment2)
 
@@ -102,8 +102,18 @@ msi_metadata <- as.data.frame(msi_metadata)
 
 colnames(msi_metadata) <- c("SampleID", "Treatment", "Time", "Rep")
 
+#randomly assigning a treatment to each of the untreated conditions. 
+msi_metadata[1:4,2] <- c("Ro","Ro","DMSO","DMSO")
+msi_metadata[3:4,4] <- c("Rep1","Rep2")
 
+#ordering the factors
+msi_metadata$Treatment <- relevel(factor(msi_metadata$Treatment), "DMSO")
 
+msi_metadata$Time <- factor(msi_metadata$Time, c("0","4","8","12","16","24"))
+
+msi_metadata$Rep <- factor(msi_metadata$Rep)
+
+#getting raw data files
 myquantfiles <- paste("data/RNAseq/",
                       msi_metadata$SampleID,
                       "/quant.sf.gz",
@@ -117,11 +127,15 @@ myTxi <- tximport(myquantfiles, type = "salmon", tx2gene = tx2gene)
 
 ```
 
-```{r clustering qc}
-# use mature gene level (sum of all mature transcripts) estimates for QC EDA
+
+## Clustering QC - Heatmap
+
+
+```{r clustering qc, message=FALSE, warning=FALSE, include=TRUE}
+#grabbing TPM values
 qcinput <- myTxi$abundance
 
-
+#making matrix for qc
 qcinput <- log2(qcinput[rowSums(qcinput) > 100,] + 1)
 dim(qcinput)
 qcCor <- cor(qcinput)
@@ -139,14 +153,13 @@ pheatmap::pheatmap(qcCor, clustering_distance_rows = "euclidean",clustering_dist
       
 dev.off()
 
-
-
 ```
 
 
+## PCA QC
 
-```{r pca qc}
 
+```{r pca qc, message=FALSE, warning=FALSE, include=TRUE}
 # perform pca
 pca_data <- prcomp(qcinput, center = T, scale. = T) 
 
@@ -164,14 +177,14 @@ pca_plot_data$time <- factor(pca_plot_data$time, levels = myLev)
 
 pca_plot_data$condition <- factor(paste(pca_plot_data$tx,pca_plot_data$time, sep = "_"))
 
-pca_plot_data$condition <- relevel(pca_plot_data$condition, ref="Untreated_00")
+pca_plot_data$condition <- relevel(pca_plot_data$condition, ref="DMSO_00")
 
 
 labelPosition <- pca_plot_data %>% group_by(tx, time,rep) %>% select(PC1, PC2) %>% summarise(mPC1=mean(PC1), mPC2=mean(PC2))
 
 myCols <- c("black",
-            RColorBrewer::brewer.pal(n = 8, name = "Greys")[2:6],
-            RColorBrewer::brewer.pal(n = 6, name = "Reds")[2:6])
+            RColorBrewer::brewer.pal(n = 6, name = "Greys")[2:6],
+            RColorBrewer::brewer.pal(n = 7, name = "Reds")[2:7])
 
 
 
@@ -182,40 +195,15 @@ p_pca <- ggplot(pca_plot_data, aes(x=-PC2, y=-PC1, color=condition)) +
   xlab(paste("PC2 (%",100*round(pca_data_info$importance[2,2], digits = 3),")", sep = "")) +
   scale_color_manual(values = myCols)
 
-
-
-# ggsave(plot = p_pca, filename = here("fig1_exvivo","plots","qcPCA_exvivo.pdf"), device = "pdf", units = "in", width = 6, height = 4, dpi = 320)
+p_pca
 ```
 
 
-```{r deg analysis}
-msi_metadata[1:4,2] <- c("Ro","Ro","DMSO","DMSO")
-msi_metadata[3:4,4] <- c("Rep1","Rep2")
-
-msi_metadata$Treatment <- relevel(factor(msi_metadata$Treatment), "DMSO")
-
-msi_metadata$Time <- factor(msi_metadata$Time, c("0","4","8","12","16","24"))
-
-msi_metadata$Rep <- factor(msi_metadata$Rep)
-
-myquantfiles <- paste("data/RNAseq/",
-                      msi_metadata$SampleID,
-                      "/quant.sf.gz",
-                      sep = "")
-  
-
-rownames(msi_metadata) <- paste(msi_metadata$Treatment,
-                          str_pad(msi_metadata$Time, 2, pad = "0"),
-                          msi_metadata$Rep, sep = "_")
-
-# import using tximport
-names(myquantfiles) <- paste(msi_metadata$Treatment, str_pad(msi_metadata$Time, 2, pad = "0"), msi_metadata$Rep, sep = "_")
-
-myTxi <- tximport(myquantfiles, type = "salmon", tx2gene = tx2gene)
+## Differential Expression Analysis
 
 
-
-
+```{r DE analysis, message=FALSE, warning=FALSE, include=TRUE}
+#Using DeSeq2 to analyze the differential expression of genes in regards to treatment and time. 
 dds <- DESeqDataSetFromTximport(txi = myTxi,
                          colData = msi_metadata,
                          design =  ~ Treatment + Time + Treatment:Time)
@@ -224,7 +212,6 @@ ddsTC <- DESeq(dds, test="LRT", reduced = ~ Treatment + Time)
 
 # add gene symbols to ddsTC
 # source info must be in same order as rownames of ddsTC
-
 annotation <- geneInfo %>% 
   select(gene, symbol, biotype) %>% # exclude transcripts
   filter(gene %in% rownames(ddsTC)) %>%  # only use genes in ddsTC
@@ -250,12 +237,59 @@ resTC$biotype <- mcols(ddsTC)$biotype
 # genes that have corrected pval < .05
 sigdiff <- resTC %>% as.data.frame() %>% filter(padj <.05)
 
+#pulling the TPMs for the sig genes
+tpmSig <- myTxi$abundance %>% as.data.frame() %>% rownames_to_column("gene_id")
+sigList <- sigdiff %>% rownames_to_column("gene_id") %>% pull("gene_id")
+tpmSig <- tpmSig %>% filter(gene_id %in% sigList)
 
+#pulling the counts for the sig genes
+countSig <- myTxi$counts %>% as.data.frame() %>% rownames_to_column("gene_id")
+countSig <- countSig %>% filter(gene_id %in% sigList)
+
+#Calculating FC of the counts for the sig genes
+#get 00hr value.
+DMSO_FC <- countSig
+DMSO_FC$t00hr <- rowMeans(DMSO_FC[,2:5])
+#get averages for all replicates
+DMSO_FC$Ro_00 <- rowMeans(DMSO_FC[,2:3])
+DMSO_FC$Ro_04 <- rowMeans(DMSO_FC[,6:7])
+DMSO_FC$DMSO_04 <- rowMeans(DMSO_FC[,8:9])
+DMSO_FC$Ro_08 <- rowMeans(DMSO_FC[,10:11])
+DMSO_FC$DMSO_08 <- rowMeans(DMSO_FC[,12:13])
+DMSO_FC$Ro_12 <- rowMeans(DMSO_FC[,14:15])
+DMSO_FC$DMSO_12 <- rowMeans(DMSO_FC[,16:17])
+DMSO_FC$Ro_16 <- rowMeans(DMSO_FC[,18:19])
+DMSO_FC$DMSO_16 <- rowMeans(DMSO_FC[,20:21])
+DMSO_FC$Ro_24 <- rowMeans(DMSO_FC[,22:23])
+DMSO_FC$DMSO_24 <- rowMeans(DMSO_FC[,24:25])
+DMSO_FC <- DMSO_FC[,c(1,26:37)]
+
+DMSO_FC <- DMSO_FC %>% column_to_rownames("gene_id")
+DMSOvalues <- DMSO_FC$t00hr
+DMSO_FC <- DMSO_FC/DMSOvalues
+DMSO_FC <- DMSO_FC %>% rownames_to_column("gene_id")
+DMSO_FC <- left_join(DMSO_FC, annotation, by = c("gene_id" = "gene"))
+
+#adding gene symbol to the TPM and count data tables
+tpmSig <- left_join(tpmSig, annotation, by = c("gene_id" = "gene"))
+countSig <- left_join(countSig, annotation, by = c("gene_id" = "gene"))
+
+#making an excel spreadsheet with the information about the DE genes. 
+write.xlsx(as.data.frame(sigdiff) %>% rownames_to_column("gene_id"), file="output/SupTable1_RNAseqDEall.xlsx", sheetName="DEgenes", row.names=FALSE)
+write.xlsx(DMSO_FC, file="output/SupTable1_RNAseqDEall.xlsx", sheetName="FoldChange_Unstimulated", append=TRUE, row.names=FALSE)
+write.xlsx(countSig, file="output/SupTable1_RNAseqDEall.xlsx", sheetName="Counts", append=TRUE, row.names=FALSE)
+write.xlsx(tpmSig, file="output/SupTable1_RNAseqDEall.xlsx", sheetName="TPMs", append=TRUE, row.names=FALSE)
+
+#A table that shows the genes from Fig 1F and their significance. 
 sigTable <- resTC %>% as.data.frame() %>% filter(symbol %in% c("SCD","LIPE","CYP11A1","HSD3B2","CYP21A2","CYP11B1","CYP11B2", "NR5A1"))
+sigTable
 ```
 
 
-```{r plot genes}
+## Plotting individual genes
+
+
+```{r plot genes, message=FALSE, warning=FALSE, include=TRUE}
 p_NR5A1 <- plotgeneFC(deseq_object = ddsTC, "NR5A1") + ylab(NULL) + xlab(NULL)
 p_SCD <- plotgeneFC(deseq_object = ddsTC, "SCD") + ylab(NULL) + xlab(NULL)
 p_HSL <- plotgeneFC(deseq_object = ddsTC, "LIPE") + ylab(NULL) + xlab(NULL)
@@ -275,13 +309,17 @@ p_pathway <- plot_grid(p_SCD  + theme(legend.position="none"),
                        p_CYP11B2  + theme(legend.position="none"),
                        p_NR5A1  + theme(legend.position="none"),
                                           nrow = 3)
+p_pathway
 
 ggsave(plot = p_pathway, device = "pdf", width = 5, height = 5, filename = here("plots","Fig1_RNAseq_FC.pdf"))
 
 ```
 
 
-```{r GO analysis}
+## GO Analysis
+
+
+```{r GO analysis, message=FALSE, warning=FALSE, include=TRUE}
 
 # using msigdb to get the gene sets
 m_df <- msigdbr(species = "Homo sapiens", subcategory = "BP")
@@ -320,45 +358,6 @@ clustmsigdb <- clustmsigdb[order(clustmsigdb[,1]),]
 
 pheatmap(mat = clustmsigdb, scale = "none", cluster_cols = F, border_color = "black",  clustering_distance_rows = "euclidean", clustering_method = "complete", color = viridis(10, option = "E", direction = 1), filename = here("plots","Fig1_HeatmapBP.pdf"), width = 40, height = 10, fontsize = 24)
 
+write_csv(x = as.data.frame(clustmsigdb) %>% rownames_to_column(), col_names = TRUE, here("output", "SupTable4_HeatmapGOMcat_all.csv"))
 
 ```
-
-```{r gsea}
-
-geneList <- resTC %>% as.data.frame() %>% pull(log2FoldChange)
-names(geneList) <- resTC %>% as.data.frame() %>% pull(symbol)
-geneList <- sort(geneList, decreasing = TRUE)
-
-library(fgsea)
-  
-fgseaRes <- fgsea(pathways = msiList, 
-                  stats    = geneList,
-                  minSize  = 5,
-                  maxSize  = 5000)
-
-plotEnrichment(msiList[["MSI2_K562_CLIP"]], geneList)
-
-dev.off()
-
-
-```
-
-
-```{r cluster Ro differences}
-
-coef(ddsTC)[,8:12]
-
-betas <- coef(ddsTC)
-topGenes <- head(order(resTC$padj),20)
-mat <- betas[topGenes, ]
-thr <- 3 
-mat[mat < -thr] <- -thr
-mat[mat > thr] <- thr
-pheatmap(mat, breaks=seq(from=-thr, to=thr, length=101),
-         cluster_col=FALSE)
-
-
-
-
-```
-
