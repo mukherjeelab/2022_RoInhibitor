@@ -1,0 +1,357 @@
+---
+title: "additional RNA-Seq analysis"
+author: "Marcin Sajek"
+date: "2023-02-22"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r loading required libs, echo=FALSE,warning=FALSE,message=FALSE}
+library(dplyr)
+library(tidyverse)
+library(magrittr)
+library(data.table)
+library(matrixStats)
+library(readxl)
+library(tximport)
+library(DESeq2)
+library(GeneOverlap)
+library(msigdbr)
+library(pheatmap)
+library(viridis)
+library(ggpubr)
+library(ggvenn)
+library(here)
+```
+
+1. Differential gene expression analysis in all time points
+
+preparing the data
+
+```{r data, warning=FALSE,message=FALSE}
+geneInfo <- read_csv(here("data","accessories","gencode.v26.primary.info.csv.zip"),
+                     col_names = FALSE)  %>%
+  set_colnames(c("gene","transcript","biotype","symbol")) %>%
+  filter(!grepl("^pre", transcript))
+tx2gene <- geneInfo %>% 
+  dplyr::select(c('transcript', 'gene'))
+msi_metadata <- read_xlsx(here("data","accessories","NMLabLibrarySummary.xlsx"),
+                          sheet = 1) %>% 
+  filter(Project == "MSI2") %>%
+  dplyr::select(c('SampleID', 'Treatment1', 'Time_hr', 'Treatment2')) %>%
+  set_colnames(c("SampleID", "Treatment", "Time", "Rep")) %>%
+  mutate(Treatment = factor(Treatment),
+         Time = factor(Time, levels = c("0","4","8","12","16","24")),
+         Rep = factor(Rep),
+         Condition = factor(paste(Treatment,Time, sep = '_')))
+myquantfiles <- paste(here(),"/data/RNAseq/",
+                      msi_metadata$SampleID,
+                      "/quant.sf.gz",
+                      sep = "")
+names(myquantfiles) <- paste(msi_metadata$Treatment, 
+                             str_pad(msi_metadata$Time, 2, pad = "0"),
+                             msi_metadata$Rep, sep = "_")
+myTxi <- tximport(myquantfiles, type = "salmon", tx2gene = tx2gene, 
+                  countsFromAbundance = 'lengthScaledTPM')
+```
+
+differential analysis in all time points vs time 0 using Wald test for each comparison
+
+```{r de, warning=FALSE,message=FALSE}
+dds <- DESeqDataSetFromTximport(txi = myTxi,
+                                colData = msi_metadata,
+                                design =  ~ Condition)
+ddsTC <- DESeq(dds)
+resultsNames(ddsTC)
+annotation <- geneInfo %>% 
+  dplyr::select(gene, symbol, biotype) %>% # exclude transcripts
+  filter(gene %in% rownames(ddsTC)) %>%  # only use genes in ddsTC
+  unique() %>% # remove duplicates
+  as.data.frame() # convert into dataframe
+rownames(annotation) <- annotation$gene
+annotation <- annotation[rownames(ddsTC),]
+# make sure order is identical
+stopifnot(
+  identical(rownames(ddsTC), annotation$gene)
+)
+mcols(ddsTC) <- cbind(mcols(ddsTC), symbol=annotation$symbol, biotype = annotation$biotype)
+res_4h <- results(ddsTC, contrast=c("Condition","Ro_4",'DMSO_4')) %>%
+  as.data.frame() %>%
+  rownames_to_column('id') %>%
+  mutate(symbol = mcols(ddsTC)$symbol,
+         dataset = '4h')
+res_4h_signif <- res_4h %>%
+  filter(padj < .05) %>%
+  mutate(direction = if_else(log2FoldChange > 0, "higher", "lower" ))
+res_8h <- results(ddsTC, contrast=c("Condition","Ro_8",'DMSO_8')) %>%
+  as.data.frame() %>%
+  rownames_to_column('id') %>%
+  mutate(symbol = mcols(ddsTC)$symbol,
+         dataset = '8h')
+res_8h_signif <- res_8h %>%
+  filter(padj < .05) %>%
+  mutate(direction = if_else(log2FoldChange > 0, "higher", "lower" ))
+res_12h <- results(ddsTC, contrast=c("Condition","Ro_12",'DMSO_12')) %>%
+  as.data.frame() %>%
+  rownames_to_column('id') %>%
+  mutate(symbol = mcols(ddsTC)$symbol,
+         dataset = '12h') 
+res_12h_signif <- res_12h %>%
+  filter(padj < .05) %>%
+  mutate(direction = if_else(log2FoldChange > 0, "higher", "lower" ))
+res_16h <- results(ddsTC, contrast=c("Condition","Ro_16",'DMSO_16')) %>%
+  as.data.frame() %>%
+  rownames_to_column('id') %>%
+  mutate(symbol = mcols(ddsTC)$symbol,
+         dataset = '16h')
+res_16h_signif <- res_16h %>%
+  filter(padj < .05) %>%
+  mutate(direction = if_else(log2FoldChange > 0, "higher", "lower" ))
+res_24h <- results(ddsTC, contrast=c("Condition","Ro_24",'DMSO_24')) %>%
+  as.data.frame() %>%
+  rownames_to_column('id') %>%
+  mutate(symbol = mcols(ddsTC)$symbol,
+         dataset = '24h')
+res_24h_signif <- res_24h %>%
+  filter(padj < .05) %>%
+  mutate(direction = if_else(log2FoldChange > 0, "higher", "lower" ))
+```
+
+enrichment in msigdb
+
+```{r enrichment, warning=FALSE, message=FALSE}
+m_df <- msigdbr(species = "Homo sapiens", subcategory = "BP")
+keepBP <- m_df %>% 
+  filter(gs_subcat == "GO:BP") %>% 
+  dplyr::count(gs_name) %>% 
+  filter(n > 9 & n < 100) %>% 
+  pull(gs_name)
+msigdbList <- m_df %>% 
+  filter(gs_subcat == "GO:BP", gs_name %in% keepBP) %>% 
+  split(x = .$gene_symbol, f = .$gs_name)
+gsize <- res_12h %>% 
+  na.omit() %>%
+  nrow()
+geneList_4h <- split(res_4h_signif$symbol, res_4h_signif$direction)
+gom_4h <- newGOM(geneList_4h, msigdbList, genome.size = gsize)
+gom_4h_mtx <- -log10(getMatrix(gom_4h, "pval")) %>%
+  t() %>%
+  .[rowMaxs(.) > 3,]
+geneList_8h <- split(res_8h_signif$symbol, res_8h_signif$direction)
+gom_8h <- newGOM(geneList_8h, msigdbList, genome.size = gsize)
+gom_8h_mtx <- -log10(getMatrix(gom_8h, "pval")) %>%
+  t() %>%
+  .[rowMaxs(.) > 3,]
+geneList_12h <- split(res_12h_signif$symbol, res_12h_signif$direction)
+gom_12h <- newGOM(geneList_12h, msigdbList, genome.size = gsize)
+gom_12h_mtx <- -log10(getMatrix(gom_12h, "pval")) %>%
+  t() %>%
+  .[rowMaxs(.) > 3,]
+geneList_16h <- split(res_16h_signif$symbol, res_16h_signif$direction)
+gom_16h <- newGOM(geneList_16h, msigdbList, genome.size = gsize)
+gom_16h_mtx <- -log10(getMatrix(gom_16h, "pval")) %>%
+  t() %>%
+  .[rowMaxs(.) > 3,]
+geneList_24h <- split(res_24h_signif$symbol, res_24h_signif$direction)
+gom_24h <- newGOM(geneList_24h, msigdbList, genome.size = gsize)
+gom_24h_mtx <- -log10(getMatrix(gom_24h, "pval")) %>%
+  t() %>%
+  .[rowMaxs(.) > 3,]
+
+up_genes <- data.frame(id = unique(c(rownames(gom_4h_mtx), rownames(gom_8h_mtx), 
+                                     rownames(gom_12h_mtx), rownames(gom_16h_mtx), 
+                                     rownames(gom_24h_mtx)))) %>%
+  mutate(`04h` = gom_4h_mtx[,'higher'][match(id, rownames(gom_4h_mtx))],
+         `08h` = gom_8h_mtx[,'higher'][match(id, rownames(gom_8h_mtx))],
+         `12h` = gom_12h_mtx[,'higher'][match(id, rownames(gom_12h_mtx))],
+         `16h` = gom_16h_mtx[,'higher'][match(id, rownames(gom_16h_mtx))],
+         `24h` = gom_24h_mtx[,'higher'][match(id, rownames(gom_24h_mtx))],
+         id = gsub('GOBP_','',id)) %>%
+  replace(is.na(.), 0) %>%
+  mutate_at(c(2:6), ~ifelse(. < 5, ., 5)) %>%
+  column_to_rownames('id') %>%
+  as.matrix() %>%
+  .[rowMaxs(.) > 3,]
+down_genes <- data.frame(id = unique(c(rownames(gom_4h_mtx), rownames(gom_8h_mtx), 
+                                     rownames(gom_12h_mtx), rownames(gom_16h_mtx), 
+                                     rownames(gom_24h_mtx)))) %>%
+  mutate(`04h` = gom_4h_mtx[,'lower'][match(id, rownames(gom_4h_mtx))],
+         `08h` = gom_8h_mtx[,'lower'][match(id, rownames(gom_8h_mtx))],
+         `12h` = gom_12h_mtx[,'lower'][match(id, rownames(gom_12h_mtx))],
+         `16h` = gom_16h_mtx[,'lower'][match(id, rownames(gom_16h_mtx))],
+         `24h` = gom_24h_mtx[,'lower'][match(id, rownames(gom_24h_mtx))],
+         id = gsub('GOBP_','',id)) %>%
+  replace(is.na(.), 0) %>%
+  mutate_at(c(2:6), ~ifelse(. < 5, ., 5)) %>%
+  column_to_rownames('id') %>%
+  as.matrix() %>%
+  .[rowMaxs(.) > 3,]
+
+htmp_up <- pheatmap(up_genes, 
+                    scale = "none", 
+                    cluster_cols = FALSE, 
+                    border_color = "black",  
+                    clustering_distance_rows = "euclidean", 
+                    clustering_method = "complete", 
+                    color = viridis(10, option = "E", direction = 1),
+                    width = 20,
+                    height = 14,
+                    fontsize = 8,
+                    main = 'upregulated genes')
+pdf(here('plots','upreg_genes_heatmap.pdf'), width = 12, height = 6)
+htmp_up
+dev.off()
+htmp_down <- pheatmap(down_genes, 
+                    scale = "none", 
+                    cluster_cols = FALSE, 
+                    border_color = "black",  
+                    clustering_distance_rows = "euclidean", 
+                    clustering_method = "complete", 
+                    color = viridis(10, option = "E", direction = 1),
+                    width = 20,
+                    height = 14,
+                    fontsize = 8,
+                    main = 'downregulated genes')
+pdf(here('plots','downreg_genes_heatmap.pdf'), width = 9, height = 1.8)
+htmp_down
+dev.off()
+```
+
+2. Stress granules analysis (list of stress granules enriched mRNAs taken from
+Khong et al., 2017 https://doi.org/10.1016/j.molcel.2017.10.015)
+
+```{r sg_analysis, warning=FALSE, message=FALSE}
+de <- fread(here('data', 'SG','de_timecourse.csv')) %>%
+  mutate(ENSEMBL_ID = gsub('\\..{1,}','', ENSEMBL_ID))
+de_up <- de %>% 
+  filter(log2FoldChange > 0)
+sg_coding <- fread(here('data', 'SG', 'sg_enr.csv'))
+sg_coding_enr <- sg_coding %>%
+  filter(Localization == 'enriched' & significant == 'yes') %>%
+  pull(test_id)
+#cdf plot option 1 - checking if genes enriched in SG have higher changes after Ro treatment
+#24 h time point, because after such time SG were observed in IF
+sg_enr_cdf_df <- res_24h %>%
+  na.omit() %>%
+  dplyr::select(c('id', 'log2FoldChange')) %>%
+  mutate(id = gsub('\\..{1,}','', id), 
+         `enriched in SG` = factor(if_else(id %in% sg_coding_enr, 'yes', 'no')))
+sg_cdf_plt <- ggecdf(sg_enr_cdf_df, x = 'log2FoldChange', color = 'enriched in SG',
+                    palette = c('black','red'),
+                    ylab = 'cumulative fraction',
+                    xlab = 'log2(FoldChange) 24h Ro treatment') +
+  theme_classic() +
+  xlim(c(-2,2)) 
+pdf(here('plots', 'sg_cdf.pdf'), width = 6.46, height = 3.76)
+sg_cdf_plt
+dev.off()
+sg_cdf_pval <- ks.test(x = sg_enr_cdf_df %>% 
+                         filter(`enriched in SG` == 'yes') %>%
+                         pull(log2FoldChange),
+                       y = sg_enr_cdf_df %>% 
+                         filter(`enriched in SG` == 'no') %>%
+                         pull(log2FoldChange),
+                       alternative = 'less')
+#cdf plot option 2 - checking if Ro targets are more enriched in SG 
+ro_targets <- rbind(res_4h_signif,res_8h_signif,res_12h_signif,res_16h_signif,
+                    res_24h_signif) %>%
+  mutate(id = gsub('\\..{1,}','', id)) %>%
+  pull(id) %>%
+  unique()
+sg_enr_cdf_df2 <- sg_coding %>%
+  dplyr::select(c('test_id', 'Fold change')) %>%
+  na.omit() %>%
+  mutate(`Ro target` = factor(if_else(test_id %in% ro_targets, 'yes', 'no')))
+sg_cdf_plt2 <- ggecdf(sg_enr_cdf_df2, x = 'Fold change', color = 'Ro target',
+                    palette = c('black','red'),
+                    ylab = 'cumulative fraction',
+                    xlab = 'enrichment in stress granules') +
+  theme_classic() +
+  xlim(c(0,5)) 
+pdf(here('plots', 'sg_cdf2.pdf'), width = 6.46, height = 3.76)
+sg_cdf_plt2
+dev.off()
+sg_cdf_pval2 <- ks.test(x = sg_enr_cdf_df2 %>% 
+                         filter(`Ro target` == 'yes') %>%
+                         pull(`Fold change`),
+                        y = sg_enr_cdf_df2 %>% 
+                         filter(`Ro target` == 'no') %>%
+                         pull(`Fold change`),
+                        alternative = 'less')
+#cdf plot option 3 - time course analysis
+sg_enr_cdf_df3 <- rbind(res_4h, res_8h,res_12h, res_16h, res_24h) %>%
+  na.omit() %>%
+  dplyr::select(c('id', 'log2FoldChange', 'dataset')) %>%
+  mutate(id = gsub('\\..{1,}','', id), 
+         `enriched in SG` = factor(case_when(id %in% sg_coding_enr & dataset == '4h' ~ '04h',
+                                             id %in% sg_coding_enr & dataset == '8h' ~ '08h',
+                                             id %in% sg_coding_enr & dataset == '12h' ~ '12h',
+                                             id %in% sg_coding_enr & dataset == '16h' ~ '16h',
+                                             id %in% sg_coding_enr & dataset == '24h' ~ '24h',
+                                             TRUE ~ 'no'), levels = c('no', '04h', '08h', 
+                                                                      '12h','16h', '24h')))
+sg_cdf_plt3 <- ggecdf(sg_enr_cdf_df3, x = 'log2FoldChange', color = 'enriched in SG',
+                    palette = c('black','#d73027','#fc8d59','#e0f3f8','#91bfdb','#4575b4'),
+                    ylab = 'cumulative fraction',
+                    xlab = 'log2(FoldChange) Ro treatment') +
+  theme_classic() +
+  xlim(c(-2,2)) 
+pdf(here('plots', 'sg_cdf3.pdf'), width = 6.46, height = 3.76)
+sg_cdf_plt3
+dev.off()
+sg_cdf_pval4 <- ks.test(x = sg_enr_cdf_df3 %>% 
+                         filter(`enriched in SG` == '04h') %>%
+                         pull(log2FoldChange),
+                        y = sg_enr_cdf_df3 %>% 
+                         filter(`enriched in SG` == 'no') %>%
+                         pull(log2FoldChange),
+                        alternative = 'less')
+sg_cdf_pval8 <- ks.test(x = sg_enr_cdf_df3 %>% 
+                         filter(`enriched in SG` == '08h') %>%
+                         pull(log2FoldChange),
+                        y = sg_enr_cdf_df3 %>% 
+                         filter(`enriched in SG` == 'no') %>%
+                         pull(log2FoldChange),
+                        alternative = 'less')
+sg_cdf_pval12 <- ks.test(x = sg_enr_cdf_df3 %>% 
+                         filter(`enriched in SG` == '12h') %>%
+                         pull(log2FoldChange),
+                        y = sg_enr_cdf_df3 %>% 
+                         filter(`enriched in SG` == 'no') %>%
+                         pull(log2FoldChange),
+                        alternative = 'less')
+sg_cdf_pval16 <- ks.test(x = sg_enr_cdf_df3 %>% 
+                         filter(`enriched in SG` == '16h') %>%
+                         pull(log2FoldChange),
+                        y = sg_enr_cdf_df3 %>% 
+                         filter(`enriched in SG` == 'no') %>%
+                         pull(log2FoldChange),
+                        alternative = 'less')
+sg_cdf_pval24 <- ks.test(x = sg_enr_cdf_df3 %>% 
+                         filter(`enriched in SG` == '24h') %>%
+                         pull(log2FoldChange),
+                        y = sg_enr_cdf_df3 %>% 
+                         filter(`enriched in SG` == 'no') %>%
+                         pull(log2FoldChange),
+                        alternative = 'less')
+#overlap between Ro targets and SG enriched genes
+#all differentially expressed genes after Ro treatment
+ov <- nrow(de %>% filter(ENSEMBL_ID %in% sg_coding_enr))
+total <- gsize - nrow(de) - length(sg_coding_enr)
+pval_all <- phyper(ov, nrow(de), total, length(sg_coding_enr), lower.tail = FALSE)
+sg_ro_all <- list(de_in_Ro = de$ENSEMBL_ID, SG_enr = sg_coding_enr)
+pdf(here('plots', 'ro_vs_sg.pdf'))
+ggvenn(sg_ro_all, show_percentage = FALSE)
+dev.off()
+#only genes upregulated after Ro treatment
+ov_up <- nrow(de_up %>% filter(ENSEMBL_ID %in% sg_coding_enr))
+total_up <- gsize - nrow(de_up) - length(sg_coding_enr)
+pval_up <- phyper(ov_up, nrow(de_up), total_up, length(sg_coding_enr), lower.tail = FALSE)
+sg_ro_up <- list(up_in_Ro = de_up$ENSEMBL_ID, SG_enr = sg_coding_enr)
+pdf(here('plots', 'ro_up_vs_sg.pdf'))
+ggvenn(sg_ro_up, show_percentage = FALSE)
+dev.off()
+```
