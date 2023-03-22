@@ -1,5 +1,5 @@
 ---
-title: "additional RNA-Seq analysis"
+title: "additional RNA-Seq and stress granules analysis"
 author: "Marcin Sajek"
 date: "2023-02-22"
 output: html_document
