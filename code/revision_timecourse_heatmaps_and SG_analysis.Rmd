@@ -286,55 +286,50 @@ sg_enr_cdf_df3 <- rbind(res_4h, res_8h,res_12h, res_16h, res_24h) %>%
   na.omit() %>%
   dplyr::select(c('id', 'log2FoldChange', 'dataset')) %>%
   mutate(id = gsub('\\..{1,}','', id), 
-         `enriched in SG` = factor(case_when(id %in% sg_coding_enr & dataset == '4h' ~ '04h',
-                                             id %in% sg_coding_enr & dataset == '8h' ~ '08h',
-                                             id %in% sg_coding_enr & dataset == '12h' ~ '12h',
-                                             id %in% sg_coding_enr & dataset == '16h' ~ '16h',
-                                             id %in% sg_coding_enr & dataset == '24h' ~ '24h',
-                                             TRUE ~ 'no'), levels = c('no', '04h', '08h', 
-                                                                      '12h','16h', '24h')))
+         dataset = factor(dataset, levels = c('4h', '8h', '12h', '16h', '24h')),
+         `enriched in SG` = factor(if_else(id %in% sg_coding_enr, 'yes', 'no')))
 sg_cdf_plt3 <- ggecdf(sg_enr_cdf_df3, x = 'log2FoldChange', color = 'enriched in SG',
-                    palette = c('black','#d73027','#fc8d59','#e0f3f8','#91bfdb','#4575b4'),
+                    palette = c('black','red'), facet.by = 'dataset',
                     ylab = 'cumulative fraction',
                     xlab = 'log2(FoldChange) Ro treatment') +
   theme_classic() +
   xlim(c(-2,2)) 
-pdf(here('plots', 'sg_cdf3.pdf'), width = 6.46, height = 3.76)
+pdf(here('plots', 'sg_cdf3.pdf'), width = 8.00, height = 5.00)
 sg_cdf_plt3
 dev.off()
 sg_cdf_pval4 <- ks.test(x = sg_enr_cdf_df3 %>% 
-                         filter(`enriched in SG` == '04h') %>%
+                         filter(`enriched in SG` == 'yes' & dataset == '4h') %>%
                          pull(log2FoldChange),
                         y = sg_enr_cdf_df3 %>% 
-                         filter(`enriched in SG` == 'no') %>%
+                         filter(`enriched in SG` == 'no' & dataset == '4h') %>%
                          pull(log2FoldChange),
                         alternative = 'less')
 sg_cdf_pval8 <- ks.test(x = sg_enr_cdf_df3 %>% 
-                         filter(`enriched in SG` == '08h') %>%
+                         filter(`enriched in SG` == 'yes' & dataset == '8h') %>%
                          pull(log2FoldChange),
                         y = sg_enr_cdf_df3 %>% 
-                         filter(`enriched in SG` == 'no') %>%
+                         filter(`enriched in SG` == 'no' & dataset == '8h') %>%
                          pull(log2FoldChange),
                         alternative = 'less')
 sg_cdf_pval12 <- ks.test(x = sg_enr_cdf_df3 %>% 
-                         filter(`enriched in SG` == '12h') %>%
+                         filter(`enriched in SG` == 'yes' & dataset == '12h') %>%
                          pull(log2FoldChange),
                         y = sg_enr_cdf_df3 %>% 
-                         filter(`enriched in SG` == 'no') %>%
+                         filter(`enriched in SG` == 'no' & dataset == '12h') %>%
                          pull(log2FoldChange),
                         alternative = 'less')
 sg_cdf_pval16 <- ks.test(x = sg_enr_cdf_df3 %>% 
-                         filter(`enriched in SG` == '16h') %>%
+                         filter(`enriched in SG` == 'yes' & dataset == '16h') %>%
                          pull(log2FoldChange),
                         y = sg_enr_cdf_df3 %>% 
-                         filter(`enriched in SG` == 'no') %>%
+                         filter(`enriched in SG` == 'no' & dataset == '16h') %>%
                          pull(log2FoldChange),
                         alternative = 'less')
 sg_cdf_pval24 <- ks.test(x = sg_enr_cdf_df3 %>% 
-                         filter(`enriched in SG` == '24h') %>%
+                         filter(`enriched in SG` == 'yes' & dataset == '24h') %>%
                          pull(log2FoldChange),
                         y = sg_enr_cdf_df3 %>% 
-                         filter(`enriched in SG` == 'no') %>%
+                         filter(`enriched in SG` == 'no' & dataset == '24h') %>%
                          pull(log2FoldChange),
                         alternative = 'less')
 #overlap between Ro targets and SG enriched genes
