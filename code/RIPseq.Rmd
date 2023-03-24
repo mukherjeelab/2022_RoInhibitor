@@ -1,0 +1,163 @@
+---
+title: "RIPseq analysis"
+author: "Marcin Sajek"
+date: "2023-03-24"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r loading required libs, echo=FALSE,warning=FALSE,message=FALSE}
+library(dplyr)
+library(tidyverse)
+library(magrittr)
+library(data.table)
+library(tximport)
+library(DESeq2)
+library(here)
+```
+
+1. Defining functions
+
+```{r funs, echo= FALSE, message=FALSE, warning=FALSE}
+extractPrecursorMatureTxi <- function(txiObject) {
+  #txiObject <- myTxi
+  x <- txiObject$abundance
+  #colnames(x) <- paste(sampleData$tx, sampleData$time, sampleData$rep, sep = "_")
+  
+  x <- data.frame("transcript_id"=rownames(x),x)
+  
+  mytxi <- vector(mode = "list")
+  
+  mytxi$abundance$ercc <- txiObject$abundance[c(2:93),] # make ERCC and rRNA matrix
+  
+  x <- x[-c(1:93),] # remove ERCC and rRNA
+  
+  x <- plyr::join(tx2gene, x, by = "transcript_id", type = "right")
+  # extract precursor levels 
+  precursor <- x[grepl(pattern = "^pre_", x = x$transcript_id),]
+  # add info per gene
+  mytxi$abundance$precursor <-  plyr::join(geneInfo %>% filter(str_detect(transcript_id, "^pre_")) %>% dplyr::select(gene_id,symbol, biotype) %>% distinct(), precursor, by = "gene_id", type = "right") %>% dplyr::select(-transcript_id)
+  
+  # identify intronless genes (these need to be dealt with due to quantification strategy)
+  intronless <- tx2gene %>%  group_by(gene_id) %>% tally() %>% filter(n == 1) %>% pull(gene_id)
+  # extract mature levels (this will include intronless RNAs)
+  mature <- x[!grepl(pattern = "^pre_", x = x$transcript_id),]
+  # sum of all isoforms of the same gene
+  matureGene <- mature %>% dplyr::select(-transcript_id) %>%
+    group_by(gene_id) %>% summarise_if(is.numeric, sum, na.rm=TRUE)
+  #  define subset of txInfo used for join below
+  subTxinfo <- geneInfo %>% dplyr::select(gene_id,symbol, biotype) %>% distinct()
+  
+  # join mature transcript level with gene info
+  mytxi$abundance$mature <- plyr::join(geneInfo %>% dplyr::select(gene_id,symbol, biotype) %>% distinct(), mature, by = "gene_id", type = "right")
+  # join mature gene level with gene info
+  mytxi$abundance$matureGene <- plyr::join(geneInfo %>% dplyr::select(gene_id,symbol, biotype) %>% distinct(), matureGene, by = "gene_id", type = "right")
+  rm(x)
+  
+  # do it all over again for counts
+  x <- txiObject$counts
+  
+  #colnames(x) <- paste(sampleData$tx, sampleData$time, sampleData$rep, sep = "_")
+  mytxi$counts$ercc <- txiObject$counts[c(2:93),] # make ERCC and rRNA matrix
+  
+  x <- data.frame("transcript_id"=rownames(x),x)
+  x <- x[-c(1:93),] # remove ERCC and rRNA
+  
+  x <- plyr::join(tx2gene, x, by = "transcript_id", type = "right")
+  # extract precursor levels 
+  precursor <- x[grepl(pattern = "^pre_", x = x$transcript_id),]
+  
+  # add info per gene
+  mytxi$counts$precursor <- plyr::join(geneInfo %>% filter(str_detect(transcript_id, "^pre_")) %>% dplyr::select(gene_id,symbol, biotype) %>% distinct(), precursor, by = "gene_id", type = "right") %>% dplyr::select(-transcript_id)
+  
+  # identify intronless genes (these need to be dealt with due to quantification strategy)
+  intronless <- tx2gene %>%  group_by(gene_id) %>% tally() %>% filter(n == 1) %>% pull(gene_id)
+  # extract mature levels (this will include intronless RNAs)
+  mature <- x[!grepl(pattern = "^pre_", x = x$transcript_id),]
+  # sum of all isoforms of the same gene
+  matureGene <- mature %>% dplyr::select(-transcript_id) %>%
+    group_by(gene_id) %>% summarise_if(is.numeric, sum, na.rm=TRUE)
+  #  define subset of txInfo used for join below
+  subTxinfo <- geneInfo %>% dplyr::select(gene_id,symbol, biotype) %>% distinct()
+  
+  # join mature transcript level with gene info
+  mytxi$counts$mature <- plyr::join(geneInfo %>% dplyr::select(gene_id,symbol, biotype) %>% distinct(), mature, by = "gene_id", type = "right")
+  # join mature gene level with gene info
+  mytxi$counts$matureGene  <- plyr::join(geneInfo %>% dplyr::select(gene_id,symbol, biotype) %>% distinct(), matureGene, by = "gene_id", type = "right")
+  
+  mytxi
+}
+```
+
+2. Reading and preparing the data
+
+```{r data_read_and_prep, warning=FALSE, message=FALSE}
+myquantfiles <- paste0(list.dirs(path = here('data', 'RIPseq'), 
+                                 recursive = FALSE), 
+                       '/quant.sf.gz')
+names(myquantfiles) <- c('input_rep1', 'input_rep2', 'rip_rep1', 'rip_rep2')
+geneInfo <- read_csv(here("data","accessories","gencode.v26.primary.info.csv.zip"),
+                     col_names = FALSE)  %>%
+  set_colnames(c("gene_id","transcript_id","biotype","symbol"))
+tx2gene <- geneInfo %>% 
+  dplyr::select(c('transcript_id', 'gene_id'))
+tmp <- read_tsv(myquantfiles[1])[1:93,1] %>%
+  set_colnames('transcript_id') %>%
+  mutate(gene_id = transcript_id)
+tx2gene <- rbind(tmp, tx2gene) #adding ERCC spike-ins to tx2gene to avoid error during tximport
+  
+myTxi <- tximport(files = myquantfiles, type = "salmon", txIn = TRUE,
+                  txOut = TRUE, countsFromAbundance = "dtuScaledTPM", 
+                  tx2gene = tx2gene)
+myTxi_rip <- extractPrecursorMatureTxi(txiObject = myTxi)
+counts <- myTxi_rip$counts$matureGene %>%
+  dplyr::select(-c('symbol', 'biotype')) %>%
+  column_to_rownames('gene_id') %>%
+  round()
+metadata <- data.frame(sample = names(myquantfiles),
+                       ip = factor(rep(c('input','rip'), each = 2)),
+                       rep = rep(c(1,2),2)) %>%
+  column_to_rownames('sample')
+```
+
+3. Differential expression analysis
+
+```{r de, warning=FALSE, message=FALSE}
+dds <- DESeqDataSetFromMatrix(countData = counts,
+                              colData = metadata,
+                              design = ~ ip)
+
+keep <- rowSums(counts(dds)) >= 40 # filter
+dds <- dds[keep,]
+dds <- DESeq(dds)
+annotation <- geneInfo %>% 
+  dplyr::select(gene_id, symbol, biotype) %>% # exclude transcripts
+  filter(gene_id %in% rownames(dds)) %>%  # only use genes in dds
+  unique() %>% # remove duplicates
+  as.data.frame() # convert into dataframe
+rownames(annotation) <- annotation$gene_id
+annotation <- annotation[rownames(dds),]
+# make sure order is identical
+stopifnot(
+  identical(rownames(dds), annotation$gene_id)
+)
+mcols(dds) <- cbind(mcols(dds), symbol=annotation$symbol, biotype = annotation$biotype)
+res <- results(dds, alpha = .05)
+summary(res)
+res_df <- res %>%
+  as.data.frame() %>%
+  mutate(biotype =  mcols(dds)$biotype,
+         symbol = mcols(dds)$symbol) %>%
+  rownames_to_column('id')
+fwrite(res_df, here('output', 'RIPseq_full_results.tsv'), sep = '\t')
+res_signif <- res %>%
+  as.data.frame() %>%
+  mutate(biotype =  mcols(dds)$biotype,
+         symbol = mcols(dds)$symbol) %>%
+  filter(padj <= .05 & log2FoldChange > .322) %>% #only significant and enriched at least 1.25x over input
+  rownames_to_column('id')
+fwrite(res_signif, here('output', 'RIPseq_significantly_enriched.tsv'), sep = '\t')
+```
