@@ -1,0 +1,146 @@
+---
+title: "Fig 1 pathview"
+author: "Marcin Sajek"
+date: "2022-09-16"
+output: html_document
+---
+
+ATTENTION!!! This script works with R-3.6.1. We find some issues with KEGGREST and pathview in R-4+
+Other parts of script works fine with R-4+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r loading required libs, echo=FALSE,warning=FALSE,message=FALSE}
+library(dplyr)
+library(tidyverse)
+library(magrittr)
+library(data.table)
+library(tximport)
+library(DESeq2)
+library(pathview)
+library(org.Hs.eg.db)
+library(KEGGREST)
+library(here)
+```
+
+dge to obtain deseq object
+
+```{r dge, message=FALSE, warning=FALSE}
+#loading Gencode gene information
+geneInfo <- read_csv(here("data","accessories","gencode.v26.primary.info.csv.zip"), col_names = F) 
+colnames(geneInfo) <- c("gene","transcript","biotype","symbol")
+
+#getting rid of precursor RNAs
+geneInfo <- geneInfo[grep('^pre_', geneInfo$transcript , invert = T),]
+
+tx2gene <- geneInfo %>% dplyr::select(transcript, gene)
+
+#loading and cleaning metadata
+msi_metadata <- readxl::read_xlsx(here("data","accessories","NMLabLibrarySummary.xlsx"), sheet = 1) %>% filter(Project == "MSI2") %>%
+  dplyr::select(SampleID, Treatment1, Time_hr, Treatment2)
+
+msi_metadata <- as.data.frame(msi_metadata)
+
+colnames(msi_metadata) <- c("SampleID", "Treatment", "Time", "Rep")
+
+#randomly assigning a treatment to each of the untreated conditions. 
+msi_metadata[1:4,2] <- c("Ro","Ro","DMSO","DMSO")
+msi_metadata[3:4,4] <- c("Rep1","Rep2")
+
+#ordering the factors
+msi_metadata$Treatment <- relevel(factor(msi_metadata$Treatment), "DMSO")
+
+msi_metadata$Time <- factor(msi_metadata$Time, c("0","4","8","12","16","24"))
+
+msi_metadata$Rep <- factor(msi_metadata$Rep)
+
+#getting raw data files
+myquantfiles <- paste0(here(),"/data/RNAseq/",
+                      msi_metadata$SampleID,
+                      "/quant.sf.gz"
+                      )
+  
+
+
+names(myquantfiles) <- paste(msi_metadata$Treatment, str_pad(msi_metadata$Time, 2, pad = "0"), msi_metadata$Rep, sep = "_")
+
+myTxi <- tximport(myquantfiles, type = "salmon", tx2gene = tx2gene)
+
+dds <- DESeqDataSetFromTximport(txi = myTxi,
+                         colData = msi_metadata,
+                         design =  ~ Treatment + Time + Treatment:Time)
+
+ddsTC <- DESeq(dds, test="LRT", reduced = ~ Treatment + Time)
+
+# add gene symbols to ddsTC
+# source info must be in same order as rownames of ddsTC
+annotation <- geneInfo %>% 
+  dplyr::select(gene, symbol, biotype) %>% # exclude transcripts
+  filter(gene %in% rownames(ddsTC)) %>%  # only use genes in ddsTC
+  unique() %>% # remove duplicates
+  as.data.frame() # convert into dataframe
+
+rownames(annotation) <- annotation$gene
+annotation <- annotation[rownames(ddsTC),]
+
+# make sure order is identical
+stopifnot(
+  identical(rownames(ddsTC), annotation$gene)
+)
+
+# add gene symbol and biotype
+mcols(ddsTC) <- cbind(mcols(ddsTC), symbol=annotation$symbol, biotype = annotation$biotype)
+
+# extract results from deseq object include symbol and biotype
+resTC <- results(ddsTC)
+resTC$symbol <- mcols(ddsTC)$symbol
+resTC$biotype <- mcols(ddsTC)$biotype
+
+sig_df <- as.data.frame(resTC) %>%
+  filter(padj < .05) %>%
+  rownames_to_column('gene')
+```
+
+preparing table with DESeq2 counts (this step takes a while)
+
+```{r counts_table, warning=FALSE, message=FALSE}
+ct_table_time <- data.frame(matrix(nrow = 24, ncol = nrow(sig_df)+1))
+colnames(ct_table_time) <- c('ID', sig_df$gene)
+for (i in 1:nrow(sig_df)) {
+  ct_table_time[,i+1] <-plotCounts(ddsTC, sig_df[i,1], intgroup = c("Time"),
+                                   returnData = TRUE)[,1]
+}
+ct_table_time$ID <- rownames(plotCounts(ddsTC, sig_df[1,1], intgroup = c("Time"),
+                                        returnData = TRUE))
+t_ct_table_time <- data.table::transpose(ct_table_time[2:ncol(ct_table_time)])
+colnames(t_ct_table_time) <- ct_table_time$ID
+t_ct_table_time$gene <- colnames(ct_table_time)[2:ncol(ct_table_time)]
+```
+
+preparing table with log2fc for each timepoint
+
+```{r l2fc, warning=FALSE, message=FALSE}
+lfc_df <- data.frame(t0 = 0,
+                     t4 = log2(rowMeans(t_ct_table_time[,c(5,6)])/rowMeans(t_ct_table_time[,c(7,8)])),
+                     t8 = log2(rowMeans(t_ct_table_time[,c(9,10)])/rowMeans(t_ct_table_time[,c(11,12)])),
+                     t12 = log2(rowMeans(t_ct_table_time[,c(13,14)])/rowMeans(t_ct_table_time[,c(15,16)])),
+                     t16 = log2(rowMeans(t_ct_table_time[,c(17,18)])/rowMeans(t_ct_table_time[,c(19,20)])),
+                     t24 = log2(rowMeans(t_ct_table_time[,c(21,22)])/rowMeans(t_ct_table_time[,c(23,24)]))
+                     ) %>%
+  set_rownames(gsub('\\..{1,}','',t_ct_table_time$gene))
+```
+
+pathview
+
+```{r pathview, warning=FALSE, message=FALSE}
+setwd(here('data','pathview'))
+pathways <- keggList("pathway", 'hsa')
+shbs.out <- pathview(gene.data = as.matrix(lfc_df), gene.idtype = "ENSEMBL", 
+                     pathway.id = "hsa00140", species = 'hsa', 
+                     out.suffix = "Fig1Sup_pathview",kegg.native = TRUE,
+                     same.layer = FALSE, multi.state = TRUE,
+                     bins = list(gene = 6), low = list(gene = "#3b528b"), 
+                     mid = list(gene = "gray"), high = list(gene = "#fde725"))
+```

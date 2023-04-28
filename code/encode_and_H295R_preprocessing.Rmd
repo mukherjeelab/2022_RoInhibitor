@@ -1,0 +1,193 @@
+---
+title: "encode and H295R preprocessing"
+author: "Marcin Sajek"
+date: "2022-09-15"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r loading required libs, echo=FALSE,warning=FALSE,message=FALSE}
+library(dplyr)
+library(tidyverse)
+library(magrittr)
+library(data.table)
+library(tximport)
+library(DESeq2)
+library(R.utils)
+library(here)
+```
+
+```{bash}
+mkdir encode
+cd encode
+mkdir kallisto_files
+cd kallisto_files
+xargs -L 1 curl -O -J -L < ../../data/EncodeCorrelation/encode_download.txt
+```
+
+extracting paired experiments from ENCODE json files
+
+```{python}
+import requests
+import pandas as pd
+
+experiments_df = pd.read_table('./data/EncodeCorrelation/kalisto_quant.tsv')
+experiments_df_filtered = experiments_df[experiments_df['Experiment_target'] != 'control']\
+    .drop_duplicates(subset='Experiment_accession', keep='first')
+experiments = list(experiments_df_filtered['Experiment_accession'])
+encode_url = 'https://www.encodeproject.org/experiments/'
+headers = {'accept': 'application/json'}
+experiment_url = ''
+experiment_control = []
+res_df = pd.DataFrame()
+
+for experiment in experiments:
+    experiment_url = encode_url+experiment+'/?format=json'
+    response = requests.get(experiment_url, headers=headers)
+    experiment_json = response.json()
+
+    for dataset in experiment_json['related_series']:
+        experiment_control.append(dataset['related_datasets'][1].replace('experiments', '').replace('/', ''))
+
+res_df['silencing'] = experiments
+res_df['control'] = experiment_control
+res_df.to_csv('./data/EncodeCorrelation/mapped_experiments.tsv', sep='\t', na_rep='NA')
+```
+
+preparing table with all datasets mapped
+
+```{r map_experiments, warning=FALSE,message=FALSE}
+metadata_kalisto <- fread(here('data','EncodeCorrelation', 'kalisto_quant.tsv'))
+
+mapping_table <- read.table(here('data','EncodeCorrelation','mapped_experiments.tsv'), header = T)
+
+controls <- metadata_kalisto %>%
+  filter(Experiment_target == 'control') %>%
+  group_by(Experiment_accession) %>%
+  mutate(File_name = paste0(File_accession,'.',File_format), Replicate = paste0('ctrl_rep_',1:n())) %>%
+  dplyr::select(c('Experiment_accession','File_name','Replicate')) %>%
+  pivot_wider(id_cols = 'Experiment_accession', names_from = 'Replicate', values_from = 'File_name')
+  
+experiments <- metadata_kalisto %>%
+  filter(!Experiment_target == 'control') %>%
+  group_by(Experiment_accession) %>%
+  mutate(File_name = paste0(File_accession,'.',File_format), Replicate = paste0('sh_rep_',1:n())) %>%
+  dplyr::select(c('Experiment_accession','File_name','Replicate')) %>%
+  pivot_wider(id_cols = 'Experiment_accession', names_from = 'Replicate', values_from = 'File_name') %>%
+  left_join(.,mapping_table, by = c('Experiment_accession' = 'silencing')) %>%
+  left_join(.,controls, by = c('control' = 'Experiment_accession')) %>%
+  mutate(Target = metadata_kalisto$Experiment_target[match(Experiment_accession, metadata_kalisto$Experiment_accession)]) %>%
+  dplyr::rename('Ctrl_experiment_accession' = 'control') %>%
+  na.omit()
+```
+
+downloading gencode v29 gtf and preparing tx2gene table
+
+```{bash}
+mkdir encode/dge_res
+cd ./data/EncodeCorrelation
+wget ftp://ftp.ebi.ac.uk/pub/databases/gencode/Gencode_human/release_29/gencode.v29.annotation.gtf.gz
+zcat gencode.v29.annotation.gtf.gz | awk -F "\t" 'BEGIN{OFS="\t"}{if($3=="transcript"){split($9, a, "\""); print a[4],a[2],a[8]}}' > geneInfo.gencode.v29.csv
+rm gencode.v29.annotation.gtf.gz
+```
+
+reading the data and performing dge
+
+```{r dge_encode, warning=FALSE,message=FALSE}
+geneInfo <- fread(here('data','EncodeCorrelation','geneInfo.gencode.v29.csv'), header = F)  %>%
+  set_colnames(c('TXNAME','GENEID','SYMBOL'))
+
+tx2gene <- geneInfo %>%
+  dplyr::select(c('TXNAME','GENEID'))
+
+for(i in 1:nrow(experiments)) {
+  files <- c(experiments[i,c(5,6,2,3)]) %>%
+    unlist()
+  txi.kallisto <- tximport(here(paste0('encode/kallisto_files/',files)), type = 'kallisto', tx2gene = tx2gene, ignoreAfterBar = T)
+  sampleTable <- data.frame(condition = factor(rep(c('ctrl', 'sh'), each = 2)))
+  rownames(sampleTable) <- colnames(txi.kallisto$counts)  
+  dds <- DESeqDataSetFromTximport(txi.kallisto, sampleTable, ~condition)
+  keep <- rowSums(counts(dds)) >= 10
+  dds <- dds[keep,]
+  dds <- DESeq(dds)
+  res <- results(dds)
+  res <- as.data.frame(res) %>%
+    rownames_to_column('ID') %>%
+    mutate(symbol = geneInfo$SYMBOL[match(ID,geneInfo$GENEID)])
+  fwrite(res,here('encode','dge_res',paste0(experiments[i,7],'_dge.tsv')), sep = '\t')
+}
+```
+
+preparing merged tables with lfc and stat
+
+```{r merging_dge_tables, warning=FALSE,message=FALSE}
+encode_dge_files <- list.files(here('encode', 'dge_res'), pattern = '.tsv')
+
+genes <- fread(here('data','EncodeCorrelation','geneInfo.gencode.v29.csv'), header = F)  %>%
+  set_colnames(c('TXNAME','GENEID','SYMBOL')) %>%
+  dplyr::select('GENEID') %>%
+  arrange(GENEID) %>%
+  distinct()
+
+tmp_names <- c('tmp1','tmp2')
+dge_encode_k562 <- genes
+
+for(i in 1:length(encode_dge_files)){
+  tmp <-fread(here('encode','dge_res',encode_dge_files[i])) %>%
+    dplyr::select(c('ID','log2FoldChange','stat'))
+  new_names <- c(paste0(gsub('_dge.tsv','',encode_dge_files[i]),'_log2FC'), 
+             paste0(gsub('_dge.tsv','',encode_dge_files[i]),'_stat'))
+  tmp_encode_k562 <- genes %>%
+    mutate(tmp1 = tmp$log2FoldChange[match(GENEID,tmp$ID)],
+           tmp2 = tmp$stat[match(GENEID,tmp$ID)]) %>%
+    rename_at(vars(tmp_names), ~ new_names)
+  dge_encode_k562 <- left_join(dge_encode_k562,tmp_encode_k562)
+}
+
+dge_encode_k562_NA_filtered <- dge_encode_k562 %>%
+  as.data.frame() %>%
+  na.omit()
+#k562_log2FC <- cbind(subset(dge_encode_k562_NA_filtered, select = GENEID), dge_encode_k562_NA_filtered[,seq_len(ncol(dge_encode_k562_NA_filtered)) %% 2 == 0])
+k562_stat <- dge_encode_k562_NA_filtered[,seq_len(ncol(dge_encode_k562_NA_filtered)) %% 2 == 1] 
+#fwrite(k562_log2FC, here('metadata','encode_k562_log2fc.tsv'),sep = '\t')
+#gzip(here('metadata','encode_k562_log2fc.tsv'),destname = here('metadata','encode_k562_log2fc.tsv.gz'))
+fwrite(k562_stat, here('data','EncodeCorrelation','encode_k562_stat.tsv'),sep = '\t')
+gzip(here('data','EncodeCorrelation','encode_k562_stat.tsv'),
+     destname = here('data','EncodeCorrelation','encode_k562_stat.tsv.gz'))
+```
+
+preprocessing H295R data from 12 h time point
+
+kallisto quantification was done before dge analysis as described in materials and methods
+
+```{bash}
+cd data
+tar -xvzf kallisto_res.tar.gz
+```
+
+
+```{r dge_H295R, warning=FALSE, message=FALSE}
+files <- paste0(list.dirs(path = here('data','kallisto_res'), full.names = TRUE, 
+                          recursive = F),'/abundance.tsv')
+names(files) <- paste0(rep(c('DMSO_rep','Ro_rep'), each = 2), rep(c(1:2),
+                                                                  times = 2))
+txi.kallisto <- tximport(files, type = 'kallisto', tx2gene = tx2gene, 
+                         ignoreAfterBar = TRUE)
+sampleTable <- data.frame(condition = factor(rep(c('DMSO', 'Ro'), each = 2)))
+rownames(sampleTable) <- colnames(txi.kallisto$counts)  
+dds <- DESeqDataSetFromTximport(txi.kallisto, sampleTable, ~condition)
+keep <- rowSums(counts(dds)) >= 20
+dds <- dds[keep,]
+dds <- DESeq(dds)
+res <- results(dds)
+res_df <- as.data.frame(res) %>%
+    rownames_to_column('ID') %>%
+    mutate(symbol = geneInfo$SYMBOL[match(ID,geneInfo$GENEID)])
+res_df_signif <- res_df %>% 
+  filter(padj < 0.05)
+fwrite(res_df_signif, here('data', 'EncodeCorrelation','H295R_ro_12h_dge.tsv'),
+       sep = '\t')
+```
