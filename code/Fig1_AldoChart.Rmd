@@ -19,6 +19,7 @@ library(gridExtra) # allows arranging of plots (rows/columns...)
 library(splitstackshape)
 library(ggpubr)
 library(here)
+library(xlsx)
 
 ```
 
@@ -280,6 +281,10 @@ tmp_us <- mutate(tmp_us, pFR = ifelse(batch == "C", 100*FR_24/dmso_C_FR_us,
                                        )
               )
 
+
+colnames(allData) <- c("tx", "stim", "Well", "OD_450", "OD_540", "OD_570", "PB_24", "FR_24", "corrected", "loganswer", "conc pg/mL", "below Std Curve", "above Std Curve", "Ro_conc", "batch")
+
+write.xlsx(allData, here("output", "AldoELISAvalues.xlsx"), sheetName = "Sheet1", col.names = TRUE)
 ```
 
 
