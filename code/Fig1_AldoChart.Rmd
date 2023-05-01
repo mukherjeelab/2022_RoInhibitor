@@ -296,6 +296,7 @@ write.xlsx(allData, here("output", "AldoELISAvalues.xlsx"), sheetName = "Sheet1"
 #making plots for each of the stimulated categories (% aldo, % viability, %DNA)
 p_Aldo_per <- ggline(tmp, x = "Ro_conc", y = "pAldo", ylab = "% Aldosterone", add = "mean_sd", xlab = "[Ro] uM") + rremove("legend") + rotate_x_text(60) + geom_hline(yintercept = 100, linetype = "dotted", color = "grey")
 p_Aldo_per <- p_Aldo_per + ylim(0,120)
+table(tmp$Ro_conc)
 p_Aldo_per
 ggsave(plot = p_Aldo_per, filename = "./plots/Fig1_Aldo_percent_sd.pdf", width = 3, height = 4)
 
