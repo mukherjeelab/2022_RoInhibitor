@@ -172,7 +172,7 @@ OD5stim$pPB <- as.numeric(OD5stim$pPB)
 OD5us$pPB <- 100*OD5us$viability_1hr/dmso_PB_us
 OD5us$pPB <- as.numeric(OD5us$pPB)
 
-colnames(OD5) <- c("tx", "dil", "stim", "Well", "OD_450", "OD_540", "OD_570", "PB_24", "viability_1hr", "corrected", "loganswer", "conc pg/mL", "below Std Curve", "above Std Curve", "dilutionCorrected_conc", "Ro_conc")
+colnames(OD5) <- c("tx", "dil", "stim", "Well", "OD_450", "OD_540", "OD_570", "viability_1hr", "corrected", "loganswer", "conc pg/mL", "below Std Curve", "above Std Curve", "dilutionCorrected_conc", "Ro_conc")
 
 write.xlsx(OD5, here("output", "CortisolELISAvalues.xlsx"), sheetName = "Sheet1", col.names = TRUE)
 
@@ -202,6 +202,7 @@ p_all_PR <- cowplot::plot_grid(
   hjust = -1,
   nrow = 1
   )
+ggsave(plot = p_all_PR, filename = here("plots", "Fig1Supp_Stim_CortisolELISA.pdf"), width = 6, height = 3)
 
 p_cort_per_us <- ggline(OD5us, x = "Ro_conc", y = "percent", ylab = "% Cortisol", add = "mean_sd", xlab = "[Ro] uM") + rremove("legend") + rotate_x_text(60) + geom_hline(yintercept = 100, linetype = "dotted", color = "black")
 p_cort_per_us <- p_cort_per_us + ylim(0,125)

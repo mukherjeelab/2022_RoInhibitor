@@ -298,19 +298,31 @@ p_Aldo_per <- ggline(tmp, x = "Ro_conc", y = "pAldo", ylab = "% Aldosterone", ad
 p_Aldo_per <- p_Aldo_per + ylim(0,120)
 table(tmp$Ro_conc)
 p_Aldo_per
-ggsave(plot = p_Aldo_per, filename = "./plots/Fig1_Aldo_percent_sd.pdf", width = 3, height = 4)
+#ggsave(plot = p_Aldo_per, filename = "./plots/Fig1_Aldo_percent_sd.pdf", width = 3, height = 4)
 
 p_PB_per <- ggline(tmp, x = "Ro_conc", y = "pPB", ylab = "% Viability", add = "mean_sd", xlab = "[Ro] uM") + rremove("legend") + rotate_x_text(60) + geom_hline(yintercept = 100, linetype = "dotted", color = "grey")
 p_PB_per <- p_PB_per + ylim(0,120)
 p_PB_per
-ggsave(plot = p_PB_per, filename = "./plots/Fig1_PB_percent_sd.pdf", width = 3, height = 4)
+#ggsave(plot = p_PB_per, filename = "./plots/Fig1_PB_percent_sd.pdf", width = 3, height = 4)
 
 p_FR_per <- ggline(tmp, x = "Ro_conc", y = "pFR", ylab = "% DNA", add = "mean_sd", xlab = "[Ro] uM") + rremove("legend") + rotate_x_text(60) + geom_hline(yintercept = 100, linetype = "dotted", color = "grey")
 p_FR_per <- p_FR_per + ylim(0,120)
 p_FR_per
-ggsave(plot = p_FR_per, filename = "./plots/Fig1_FR_percent_sd.pdf", width = 3, height = 4)
+#ggsave(plot = p_FR_per, filename = "./plots/Fig1_FR_percent_sd.pdf", width = 3, height = 4)
 
+tmp$stim <- "stim_Ang"
+tmp_us$stim <- "unstim_Ang"
+allData <- rbind(tmp, tmp_us)
+allData <- allData %>% select(c("stim", "batch", "pPB", "Ro_conc"))
 
+OD5stim$batch <- "D"
+OD5us$batch <- "E"
+OD5stim$stim <- "stim_FSK"
+OD5us$stim <- "unstim_FSK"
+allData <- rbind(allData, OD5stim %>% select(c("stim", "batch", "pPB", "Ro_conc")), OD5us %>% select(c("stim", "batch", "pPB", "Ro_conc")))
+#allData <- unite(allData, "batch", c("stim","batch"))
+
+ggline(allData, x = "Ro_conc", y = "pPB", ylab = "% Viability", add = "mean_sd", xlab = "[Ro] uM", color = "stim") + rotate_x_text(60) + geom_hline(yintercept = 100, linetype = "dotted", color = "grey") + scale_fill_colorblind()
 ```
 
 
